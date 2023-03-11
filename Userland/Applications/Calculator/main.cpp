@@ -6,6 +6,8 @@
 
 #include "CalculatorWidget.h"
 #include "RoundingDialog.h"
+#include "ScientificWidget.h"
+#include "WidgetInterface.h"
 #include <LibCore/System.h>
 #include <LibCrypto/NumberTheory/ModularFunctions.h>
 #include <LibGUI/Action.h>
@@ -35,7 +37,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     window->set_resizable(false);
     window->resize(250, 215);
 
-    auto widget = TRY(window->set_main_widget<CalculatorWidget>());
+    NonnullRefPtr<WidgetInterface> widget = TRY(window->set_main_widget<CalculatorWidget>());
 
     window->set_icon(app_icon.bitmap_for_size(16));
 
@@ -123,6 +125,27 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto& help_menu = window->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_command_palette_action(window));
     help_menu.add_action(GUI::CommonActions::make_about_action("Calculator", app_icon, window));
+
+    auto& mode_menu = window->add_menu("&Mode");
+    GUI::ActionGroup mode_actions;
+    Function<void(GUI::Action&)> standard_fn = [&](GUI::Action& action) {
+        auto state = widget->get_state();
+        widget = window->set_main_widget<CalculatorWidget>(std::move(state)).value();
+        action.set_checked(true);
+    };
+    Function<void(GUI::Action&)> scientific_fn = [&](GUI::Action& action) {
+        auto state = widget->get_state();
+        widget = window->set_main_widget<ScientificWidget>(std::move(state)).value();
+        action.set_checked(true);
+    };
+    auto standard_action = GUI::Action::create_checkable("&Standard", std::move(standard_fn));
+    auto scientific_action = GUI::Action::create_checkable("&Scientific", std::move(scientific_fn));
+    mode_actions.add_action(*standard_action);
+    mode_actions.add_action(*scientific_action);
+    mode_actions.set_exclusive(true);
+    mode_menu.add_action(*standard_action);
+    mode_menu.add_action(*scientific_action);
+    mode_menu.action_at(0)->activate();
 
     window->show();
 

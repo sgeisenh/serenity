@@ -47,6 +47,18 @@ Optional<Crypto::BigFraction> Calculator::operation_with_literal_argument(Operat
         m_current_value = argument.sqrt();
         clear_operation();
         break;
+    case Operation::Sin:
+        m_current_value = argument.sin();
+        clear_operation();
+        break;
+    case Operation::Cos:
+        m_current_value = argument.cos();
+        clear_operation();
+        break;
+    case Operation::Tan:
+        m_current_value = argument.tan();
+        clear_operation();
+        break;
     case Operation::Inverse:
         if (argument == Crypto::BigFraction {}) {
             m_has_error = true;
@@ -145,6 +157,9 @@ Crypto::BigFraction Calculator::finish_binary_operation(Crypto::BigFraction cons
 
     case Operation::None:
     case Operation::Sqrt:
+    case Operation::Sin:
+    case Operation::Cos:
+    case Operation::Tan:
     case Operation::Inverse:
     case Operation::Percent:
     case Operation::ToggleSign:

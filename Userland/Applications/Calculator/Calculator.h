@@ -33,6 +33,9 @@ public:
         Inverse,
         Percent,
         ToggleSign,
+        Sin,
+        Cos,
+        Tan,
 
         MemClear,
         MemRecall,

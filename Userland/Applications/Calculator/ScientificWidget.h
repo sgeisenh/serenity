@@ -16,10 +16,10 @@
 #include <LibGUI/Action.h>
 #include <LibGUI/Widget.h>
 
-class CalculatorWidget final : public WidgetInterface {
-    C_OBJECT(CalculatorWidget)
+class ScientificWidget final : public WidgetInterface {
+    C_OBJECT(ScientificWidget)
 public:
-    virtual ~CalculatorWidget() override = default;
+    virtual ~ScientificWidget() override = default;
     DeprecatedString get_entry() override;
     void set_entry(Crypto::BigFraction) override;
     void set_typed_entry(Crypto::BigFraction) override;
@@ -33,8 +33,8 @@ public:
     CalcState get_state() override;
 
 private:
-    CalculatorWidget();
-    CalculatorWidget(CalcState state);
+    ScientificWidget();
+    ScientificWidget(CalcState state);
 
     void add_operation_button(GUI::Button&, Calculator::Operation);
     void add_digit_button(GUI::Button&, int digit);
@@ -68,6 +68,9 @@ private:
     RefPtr<GUI::Button> m_inverse_button;
     RefPtr<GUI::Button> m_percent_button;
     RefPtr<GUI::Button> m_equals_button;
+    RefPtr<GUI::Button> m_sin_button;
+    RefPtr<GUI::Button> m_cos_button;
+    RefPtr<GUI::Button> m_tan_button;
 
     StringView m_format;
     RefPtr<GUI::Action> m_rounding_custom;

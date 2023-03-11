@@ -248,4 +248,22 @@ BigFraction BigFraction::sqrt() const
     return BigFraction { AK::sqrt(to_double()) };
 }
 
+BigFraction BigFraction::sin() const
+{
+    // FIXME: very naive implementation
+    return BigFraction { AK::sin(to_double()) };
+}
+
+BigFraction BigFraction::cos() const
+{
+    // FIXME: very naive implementation
+    return BigFraction { AK::cos(to_double()) };
+}
+
+BigFraction BigFraction::tan() const
+{
+    // FIXME: very naive implementation
+    return BigFraction { AK::tan(to_double()) };
+}
+
 }

@@ -42,6 +42,9 @@ public:
 
     BigFraction invert() const;
     BigFraction sqrt() const;
+    BigFraction sin() const;
+    BigFraction cos() const;
+    BigFraction tan() const;
 
     void set_to_0();
 

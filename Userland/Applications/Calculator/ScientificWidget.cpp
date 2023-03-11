@@ -7,8 +7,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include "CalculatorWidget.h"
-#include <Applications/Calculator/CalculatorGML.h>
+#include "ScientificWidget.h"
+#include <Applications/Calculator/ScientificGML.h>
 #include <LibCrypto/BigFraction/BigFraction.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/Label.h>
@@ -16,15 +16,15 @@
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/Palette.h>
 
-CalculatorWidget::CalculatorWidget() : CalculatorWidget(CalcState{}) {}
+ScientificWidget::ScientificWidget() : ScientificWidget(CalcState{}) {}
 
-CalculatorWidget::CalculatorWidget(CalcState state):
+ScientificWidget::ScientificWidget(CalcState state):
     m_calculator(std::move(state.calculator))
     , m_keypad(std::move(state.keypad))
     , m_format(state.format)
     , m_rounding_custom(std::move(state.rounding_custom))
 {
-    load_from_gml(calculator_gml).release_value_but_fixme_should_propagate_errors();
+    load_from_gml(scientific_gml).release_value_but_fixme_should_propagate_errors();
 
     m_entry = *find_descendant_of_type_named<GUI::TextBox>("entry_textbox");
     m_entry->set_relative_rect(5, 5, 244, 26);
@@ -102,13 +102,22 @@ CalculatorWidget::CalculatorWidget(CalcState state):
     m_percent_button = *find_descendant_of_type_named<GUI::Button>("mod_button");
     add_operation_button(*m_percent_button, Calculator::Operation::Percent);
 
+    m_sin_button = *find_descendant_of_type_named<GUI::Button>("sin_button");
+    add_operation_button(*m_sin_button, Calculator::Operation::Sin);
+
+    m_cos_button = *find_descendant_of_type_named<GUI::Button>("cos_button");
+    add_operation_button(*m_cos_button, Calculator::Operation::Cos);
+
+    m_tan_button = *find_descendant_of_type_named<GUI::Button>("tan_button");
+    add_operation_button(*m_tan_button, Calculator::Operation::Tan);
+
     m_equals_button = *find_descendant_of_type_named<GUI::Button>("equal_button");
     add_operation_button(*m_equals_button, Calculator::Operation::Equals);
 
     update_display();
 }
 
-void CalculatorWidget::perform_operation(Calculator::Operation operation)
+void ScientificWidget::perform_operation(Calculator::Operation operation)
 {
     Optional<Crypto::BigFraction> res;
     if (m_keypad.in_typing_state()) {
@@ -124,14 +133,14 @@ void CalculatorWidget::perform_operation(Calculator::Operation operation)
     update_display();
 }
 
-void CalculatorWidget::add_operation_button(GUI::Button& button, Calculator::Operation operation)
+void ScientificWidget::add_operation_button(GUI::Button& button, Calculator::Operation operation)
 {
     button.on_click = [this, operation](auto) {
         perform_operation(operation);
     };
 }
 
-void CalculatorWidget::add_digit_button(GUI::Button& button, int digit)
+void ScientificWidget::add_digit_button(GUI::Button& button, int digit)
 {
     button.on_click = [this, digit](auto) {
         m_keypad.type_digit(digit);
@@ -139,24 +148,24 @@ void CalculatorWidget::add_digit_button(GUI::Button& button, int digit)
     };
 }
 
-DeprecatedString CalculatorWidget::get_entry()
+DeprecatedString ScientificWidget::get_entry()
 {
     return m_entry->text();
 }
 
-void CalculatorWidget::set_entry(Crypto::BigFraction value)
+void ScientificWidget::set_entry(Crypto::BigFraction value)
 {
     m_keypad.set_value(move(value));
     update_display();
 }
 
-void CalculatorWidget::set_typed_entry(Crypto::BigFraction value)
+void ScientificWidget::set_typed_entry(Crypto::BigFraction value)
 {
     m_keypad.set_typed_value(move(value));
     update_display();
 }
 
-void CalculatorWidget::update_display()
+void ScientificWidget::update_display()
 {
     m_entry->set_text(m_keypad.to_deprecated_string());
     if (m_calculator.has_error())
@@ -165,7 +174,7 @@ void CalculatorWidget::update_display()
         m_label->set_text("");
 }
 
-void CalculatorWidget::keydown_event(GUI::KeyEvent& event)
+void ScientificWidget::keydown_event(GUI::KeyEvent& event)
 {
     if (event.key() == KeyCode::Key_Return || event.key() == KeyCode::Key_Equal)
         m_equals_button->click();
@@ -199,30 +208,30 @@ void CalculatorWidget::keydown_event(GUI::KeyEvent& event)
     update_display();
 }
 
-void CalculatorWidget::shrink(unsigned shrink_threshold)
+void ScientificWidget::shrink(unsigned shrink_threshold)
 {
     m_keypad.shrink(shrink_threshold);
     update_display();
 }
 
-unsigned CalculatorWidget::rounding_length() const
+unsigned ScientificWidget::rounding_length() const
 {
     return m_keypad.rounding_length();
 }
 
-void CalculatorWidget::set_rounding_length(unsigned rounding_threshold)
+void ScientificWidget::set_rounding_length(unsigned rounding_threshold)
 {
     m_keypad.set_rounding_length(rounding_threshold);
     update_display();
 }
 
-void CalculatorWidget::set_rounding_custom(GUI::Action& action, StringView format)
+void ScientificWidget::set_rounding_custom(GUI::Action& action, StringView format)
 {
     m_format = format;
     m_rounding_custom = action;
 }
 
-CalcState CalculatorWidget::get_state() {
+CalcState ScientificWidget::get_state() {
     return CalcState {
         .calculator=m_calculator,
         .keypad=m_keypad,
