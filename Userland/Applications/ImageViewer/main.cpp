@@ -5,8 +5,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include "MainWidget.h"
 #include "ViewWidget.h"
 #include <AK/URL.h>
+#include <LibConfig/Client.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/System.h>
 #include <LibDesktop/Launcher.h>
@@ -39,13 +41,17 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto app = TRY(GUI::Application::try_create(arguments));
 
+    Config::pledge_domain("ImageViewer");
+
+    app->set_config_domain(TRY("ImageViewer"_string));
+
     TRY(Desktop::Launcher::add_allowed_handler_with_any_url("/bin/ImageViewer"));
     TRY(Desktop::Launcher::add_allowed_handler_with_only_specific_urls("/bin/Help", { URL::create_with_file_scheme("/usr/share/man/man1/ImageViewer.md") }));
     TRY(Desktop::Launcher::seal_allowlist());
 
     auto app_icon = GUI::Icon::default_icon("filetype-image"sv);
 
-    char const* path = nullptr;
+    StringView path;
     Core::ArgsParser args_parser;
     args_parser.add_positional_argument(path, "The image file to be displayed.", "file", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
@@ -56,16 +62,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     window->set_icon(app_icon.bitmap_for_size(16));
     window->set_title("Image Viewer");
 
-    auto root_widget = TRY(window->set_main_widget<GUI::Widget>());
-    root_widget->set_fill_with_background_color(true);
-    root_widget->set_layout<GUI::VerticalBoxLayout>();
-    root_widget->layout()->set_spacing(2);
+    auto root_widget = TRY(window->set_main_widget<MainWidget>());
 
     auto toolbar_container = TRY(root_widget->try_add<GUI::ToolbarContainer>());
     auto main_toolbar = TRY(toolbar_container->try_add<GUI::Toolbar>());
 
     auto widget = TRY(root_widget->try_add<ViewWidget>());
-    if (path) {
+    if (!path.is_empty()) {
         widget->set_path(path);
     }
     widget->on_scale_change = [&](float scale) {
@@ -182,12 +185,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             widget->navigate(ViewWidget::Directions::First);
         });
 
-    auto go_back_action = GUI::Action::create("Go &Back", { Mod_None, Key_Left }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/go-back.png"sv)),
+    auto go_back_action = GUI::Action::create("Go to &Previous", { Mod_None, Key_Left }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/go-back.png"sv)),
         [&](auto&) {
             widget->navigate(ViewWidget::Directions::Back);
         });
 
-    auto go_forward_action = GUI::Action::create("Go &Forward", { Mod_None, Key_Right }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/go-forward.png"sv)),
+    auto go_forward_action = GUI::Action::create("Go to &Next", { Mod_None, Key_Right }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/go-forward.png"sv)),
         [&](auto&) {
             widget->navigate(ViewWidget::Directions::Forward);
         });
@@ -288,6 +291,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(file_menu->try_add_action(open_action));
     TRY(file_menu->try_add_action(delete_action));
     TRY(file_menu->try_add_separator());
+
+    TRY(file_menu->add_recent_files_list([&](auto& action) {
+        auto path = action.text();
+        widget->set_path(path);
+        widget->load_from_file(path);
+    }));
+
     TRY(file_menu->try_add_action(quit_action));
 
     auto image_menu = TRY(window->try_add_menu("&Image"));

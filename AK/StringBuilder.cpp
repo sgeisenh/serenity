@@ -15,6 +15,7 @@
 
 #ifndef KERNEL
 #    include <AK/DeprecatedString.h>
+#    include <AK/FlyString.h>
 #    include <AK/Utf16View.h>
 #endif
 
@@ -104,10 +105,9 @@ void StringBuilder::append_repeated(char ch, size_t n)
     MUST(try_append_repeated(ch, n));
 }
 
-ByteBuffer StringBuilder::to_byte_buffer() const
+ErrorOr<ByteBuffer> StringBuilder::to_byte_buffer() const
 {
-    // FIXME: Handle OOM failure.
-    return ByteBuffer::copy(data(), length()).release_value_but_fixme_should_propagate_errors();
+    return ByteBuffer::copy(data(), length());
 }
 
 #ifndef KERNEL
@@ -121,6 +121,11 @@ DeprecatedString StringBuilder::to_deprecated_string() const
 ErrorOr<String> StringBuilder::to_string() const
 {
     return String::from_utf8(string_view());
+}
+
+ErrorOr<FlyString> StringBuilder::to_fly_string() const
+{
+    return FlyString::from_utf8(string_view());
 }
 #endif
 

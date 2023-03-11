@@ -45,10 +45,10 @@ void StyleSheetList::remove_sheet(CSSStyleSheet& sheet)
     m_document.invalidate_style();
 }
 
-StyleSheetList* StyleSheetList::create(DOM::Document& document)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<StyleSheetList>> StyleSheetList::create(DOM::Document& document)
 {
     auto& realm = document.realm();
-    return realm.heap().allocate<StyleSheetList>(realm, document).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<StyleSheetList>(realm, document));
 }
 
 StyleSheetList::StyleSheetList(DOM::Document& document)
@@ -84,7 +84,7 @@ bool StyleSheetList::is_supported_property_index(u32 index) const
     return index < m_sheets.size();
 }
 
-JS::Value StyleSheetList::item_value(size_t index) const
+WebIDL::ExceptionOr<JS::Value> StyleSheetList::item_value(size_t index) const
 {
     if (index >= m_sheets.size())
         return JS::js_undefined();

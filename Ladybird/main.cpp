@@ -9,19 +9,19 @@
 #include "Settings.h"
 #include "Utilities.h"
 #include "WebContentView.h"
+#include <AK/OwnPtr.h>
 #include <Browser/CookieJar.h>
 #include <Browser/Database.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/DeprecatedFile.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/File.h>
-#include <LibCore/Stream.h>
 #include <LibCore/System.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibMain/Main.h>
 #include <LibSQL/SQLClient.h>
 #include <QApplication>
 
-Browser::Settings* s_settings;
+AK::OwnPtr<Browser::Settings> s_settings;
 
 static ErrorOr<void> handle_attached_debugger()
 {
@@ -30,8 +30,8 @@ static ErrorOr<void> handle_attached_debugger()
     // incorrectly forwards the signal to us even when it's set to
     // "nopass". See https://sourceware.org/bugzilla/show_bug.cgi?id=9425
     // for details.
-    auto unbuffered_status_file = TRY(Core::Stream::File::open("/proc/self/status"sv, Core::Stream::OpenMode::Read));
-    auto status_file = TRY(Core::Stream::BufferedFile::create(move(unbuffered_status_file)));
+    auto unbuffered_status_file = TRY(Core::File::open("/proc/self/status"sv, Core::File::OpenMode::Read));
+    auto status_file = TRY(Core::BufferedFile::create(move(unbuffered_status_file)));
     auto buffer = TRY(ByteBuffer::create_uninitialized(4096));
     while (TRY(status_file->can_read_line())) {
         auto line = TRY(status_file->read_line(buffer));
@@ -78,8 +78,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto get_formatted_url = [&](StringView const& raw_url) -> URL {
         URL url = raw_url;
-        if (Core::File::exists(raw_url))
-            url = URL::create_with_file_scheme(Core::File::real_path_for(raw_url));
+        if (Core::DeprecatedFile::exists(raw_url))
+            url = URL::create_with_file_scheme(Core::DeprecatedFile::real_path_for(raw_url));
         else if (!url.is_valid())
             url = DeprecatedString::formatted("http://{}", raw_url);
         return url;
@@ -87,6 +87,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     if (dump_layout_tree) {
         WebContentView view({});
+        view.set_viewport_rect(Gfx::IntRect({}, { 800, 600 }));
         view.on_load_finish = [&](auto&) {
             auto dump = view.dump_layout_tree().release_value_but_fixme_should_propagate_errors();
             outln("{}", dump);
@@ -106,8 +107,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto cookie_jar = TRY(Browser::CookieJar::create(*database));
 
+    s_settings = adopt_own_if_nonnull(new Browser::Settings());
     BrowserWindow window(cookie_jar, webdriver_content_ipc_path);
-    s_settings = new Browser::Settings(&window);
     window.setWindowTitle("Ladybird");
     window.resize(800, 600);
     window.show();

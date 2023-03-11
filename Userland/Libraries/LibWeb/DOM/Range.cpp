@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
  * Copyright (c) 2022, Luke Wilde <lukew@serenityos.org>
- * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,13 +11,17 @@
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentFragment.h>
 #include <LibWeb/DOM/DocumentType.h>
+#include <LibWeb/DOM/ElementFactory.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/ProcessingInstruction.h>
 #include <LibWeb/DOM/Range.h>
 #include <LibWeb/DOM/Text.h>
+#include <LibWeb/DOMParsing/InnerHTML.h>
 #include <LibWeb/Geometry/DOMRect.h>
+#include <LibWeb/HTML/HTMLHtmlElement.h>
 #include <LibWeb/HTML/Window.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
+#include <LibWeb/Layout/Viewport.h>
+#include <LibWeb/Namespace.h>
 
 namespace Web::DOM {
 
@@ -27,24 +31,24 @@ HashTable<Range*>& Range::live_ranges()
     return ranges;
 }
 
-JS::NonnullGCPtr<Range> Range::create(HTML::Window& window)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> Range::create(HTML::Window& window)
 {
     return Range::create(window.associated_document());
 }
 
-JS::NonnullGCPtr<Range> Range::create(Document& document)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> Range::create(Document& document)
 {
     auto& realm = document.realm();
-    return realm.heap().allocate<Range>(realm, document).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<Range>(realm, document));
 }
 
-JS::NonnullGCPtr<Range> Range::create(Node& start_container, u32 start_offset, Node& end_container, u32 end_offset)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> Range::create(Node& start_container, u32 start_offset, Node& end_container, u32 end_offset)
 {
     auto& realm = start_container.realm();
-    return realm.heap().allocate<Range>(realm, start_container, start_offset, end_container, end_offset).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<Range>(realm, start_container, start_offset, end_container, end_offset));
 }
 
-JS::NonnullGCPtr<Range> Range::construct_impl(JS::Realm& realm)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> Range::construct_impl(JS::Realm& realm)
 {
     auto& window = verify_cast<HTML::Window>(realm.global_object());
     return Range::create(window);
@@ -139,7 +143,7 @@ RelativeBoundaryPointPosition position_of_boundary_point_relative_to_other_bound
     // 4. If nodeA is an ancestor of nodeB:
     if (node_a.is_ancestor_of(node_b)) {
         // 1. Let child be nodeB.
-        JS::NonnullGCPtr<Node> child = node_b;
+        JS::NonnullGCPtr<Node const> child = node_b;
 
         // 2. While child is not a child of nodeA, set child to its parent.
         while (!node_a.is_parent_of(child)) {
@@ -405,7 +409,7 @@ void Range::collapse(bool to_start)
 }
 
 // https://dom.spec.whatwg.org/#dom-range-selectnodecontents
-WebIDL::ExceptionOr<void> Range::select_node_contents(Node const& node)
+WebIDL::ExceptionOr<void> Range::select_node_contents(Node& node)
 {
     // 1. If node is a doctype, throw an "InvalidNodeTypeError" DOMException.
     if (is<DocumentType>(node))
@@ -657,7 +661,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::extract()
 
     // 11. Let contained children be a list of all children of common ancestor that are contained in range, in tree order.
     Vector<JS::NonnullGCPtr<Node>> contained_children;
-    for (Node const* node = common_ancestor->first_child(); node; node = node->next_sibling()) {
+    for (Node* node = common_ancestor->first_child(); node; node = node->next_sibling()) {
         if (contains_node(*node))
             contained_children.append(*node);
     }
@@ -715,7 +719,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::extract()
         TRY(fragment->append_child(clone));
 
         // 3. Let subrange be a new live range whose start is (original start node, original start offset) and whose end is (first partially contained child, first partially contained child’s length).
-        auto subrange = Range::create(original_start_node, original_start_offset, *first_partially_contained_child, first_partially_contained_child->length());
+        auto subrange = TRY(Range::create(original_start_node, original_start_offset, *first_partially_contained_child, first_partially_contained_child->length()));
 
         // 4. Let subfragment be the result of extracting subrange.
         auto subfragment = TRY(subrange->extract());
@@ -753,7 +757,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::extract()
         TRY(fragment->append_child(clone));
 
         // 3. Let subrange be a new live range whose start is (last partially contained child, 0) and whose end is (original end node, original end offset).
-        auto subrange = Range::create(*last_partially_contained_child, 0, original_end_node, original_end_offset);
+        auto subrange = TRY(Range::create(*last_partially_contained_child, 0, original_end_node, original_end_offset));
 
         // 4. Let subfragment be the result of extracting subrange.
         auto subfragment = TRY(subrange->extract());
@@ -983,7 +987,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::clone_the_content
 
     // 11. Let contained children be a list of all children of common ancestor that are contained in range, in tree order.
     Vector<JS::NonnullGCPtr<Node>> contained_children;
-    for (Node const* node = common_ancestor->first_child(); node; node = node->next_sibling()) {
+    for (Node* node = common_ancestor->first_child(); node; node = node->next_sibling()) {
         if (contains_node(*node))
             contained_children.append(*node);
     }
@@ -1016,7 +1020,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::clone_the_content
         TRY(fragment->append_child(clone));
 
         // 3. Let subrange be a new live range whose start is (original start node, original start offset) and whose end is (first partially contained child, first partially contained child’s length).
-        auto subrange = Range::create(original_start_node, original_start_offset, *first_partially_contained_child, first_partially_contained_child->length());
+        auto subrange = TRY(Range::create(original_start_node, original_start_offset, *first_partially_contained_child, first_partially_contained_child->length()));
 
         // 4. Let subfragment be the result of cloning the contents of subrange.
         auto subfragment = TRY(subrange->clone_the_contents());
@@ -1055,7 +1059,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::clone_the_content
         TRY(fragment->append_child(clone));
 
         // 3. Let subrange be a new live range whose start is (last partially contained child, 0) and whose end is (original end node, original end offset).
-        auto subrange = Range::create(*last_partially_contained_child, 0, original_end_node, original_end_offset);
+        auto subrange = TRY(Range::create(*last_partially_contained_child, 0, original_end_node, original_end_offset));
 
         // 4. Let subfragment be the result of cloning the contents of subrange.
         auto subfragment = TRY(subrange->clone_the_contents());
@@ -1139,7 +1143,61 @@ WebIDL::ExceptionOr<void> Range::delete_contents()
 JS::NonnullGCPtr<Geometry::DOMRect> Range::get_bounding_client_rect() const
 {
     dbgln("(STUBBED) Range::get_bounding_client_rect()");
-    return Geometry::DOMRect::construct_impl(realm(), 0, 0, 0, 0);
+    return Geometry::DOMRect::construct_impl(realm(), 0, 0, 0, 0).release_value_but_fixme_should_propagate_errors();
+}
+
+// https://w3c.github.io/DOM-Parsing/#dom-range-createcontextualfragment
+WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::create_contextual_fragment(DeprecatedString const& fragment)
+{
+    // 1. Let node be the context object's start node.
+    JS::NonnullGCPtr<Node> node = *start_container();
+
+    // Let element be as follows, depending on node's interface:
+    JS::GCPtr<Element> element;
+    switch (static_cast<NodeType>(node->node_type())) {
+    case NodeType::DOCUMENT_NODE:
+    case NodeType::DOCUMENT_FRAGMENT_NODE:
+        element = nullptr;
+        break;
+    case NodeType::ELEMENT_NODE:
+        element = static_cast<DOM::Element&>(*node);
+        break;
+    case NodeType::TEXT_NODE:
+    case NodeType::COMMENT_NODE:
+        element = node->parent_element();
+        break;
+    case NodeType::DOCUMENT_TYPE_NODE:
+    case NodeType::PROCESSING_INSTRUCTION_NODE:
+        // [DOM4] prevents this case.
+        VERIFY_NOT_REACHED();
+    default:
+        VERIFY_NOT_REACHED();
+    }
+
+    // 2. If either element is null or the following are all true:
+    //    - element's node document is an HTML document,
+    //    - element's local name is "html", and
+    //    - element's namespace is the HTML namespace;
+    if (!element || is<HTML::HTMLHtmlElement>(*element)) {
+        // let element be a new Element with
+        // - "body" as its local name,
+        // - The HTML namespace as its namespace, and
+        // - The context object's node document as its node document.
+        element = TRY(DOM::create_element(node->document(), "body"sv, Namespace::HTML));
+    }
+
+    // 3. Let fragment node be the result of invoking the fragment parsing algorithm with fragment as markup, and element as the context element.
+    auto fragment_node = TRY(DOMParsing::parse_fragment(fragment, *element));
+
+    // 4. Unmark all scripts in fragment node as "already started" and as "parser-inserted".
+    fragment_node->for_each_in_subtree_of_type<HTML::HTMLScriptElement>([&](HTML::HTMLScriptElement& script_element) {
+        script_element.unmark_as_already_started({});
+        script_element.unmark_as_parser_inserted({});
+        return IterationDecision::Continue;
+    });
+
+    // 5. Return the value of fragment node.
+    return fragment_node;
 }
 
 }

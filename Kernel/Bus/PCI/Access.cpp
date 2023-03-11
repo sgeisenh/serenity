@@ -18,7 +18,6 @@
 #include <Kernel/Memory/MemoryManager.h>
 #include <Kernel/Memory/Region.h>
 #include <Kernel/Memory/TypedMapping.h>
-#include <Kernel/ProcessExposed.h>
 #include <Kernel/Sections.h>
 
 namespace Kernel::PCI {
@@ -137,7 +136,7 @@ ErrorOr<void> Access::add_host_controller_and_scan_for_devices(NonnullOwnPtr<Hos
     m_host_controllers.get(domain_number).value()->enumerate_attached_devices([&](EnumerableDeviceIdentifier const& device_identifier) -> IterationDecision {
         auto device_identifier_or_error = DeviceIdentifier::from_enumerable_identifier(device_identifier);
         if (device_identifier_or_error.is_error()) {
-            error_or_void = device_identifier_or_error.error();
+            error_or_void = device_identifier_or_error.release_error();
             return IterationDecision::Break;
         }
         m_device_identifiers.append(device_identifier_or_error.release_value());
@@ -167,7 +166,7 @@ UNMAP_AFTER_INIT void Access::rescan_hardware()
         (*it).value->enumerate_attached_devices([this, &error_or_void](EnumerableDeviceIdentifier device_identifier) -> IterationDecision {
             auto device_identifier_or_error = DeviceIdentifier::from_enumerable_identifier(device_identifier);
             if (device_identifier_or_error.is_error()) {
-                error_or_void = device_identifier_or_error.error();
+                error_or_void = device_identifier_or_error.release_error();
                 return IterationDecision::Break;
             }
             m_device_identifiers.append(device_identifier_or_error.release_value());
@@ -184,7 +183,7 @@ ErrorOr<void> Access::fast_enumerate(Function<void(DeviceIdentifier const&)>& ca
 {
     // Note: We hold the m_access_lock for a brief moment just to ensure we get
     // a complete Vector in case someone wants to mutate it.
-    NonnullRefPtrVector<DeviceIdentifier> device_identifiers;
+    Vector<NonnullRefPtr<DeviceIdentifier>> device_identifiers;
     {
         SpinlockLocker locker(m_access_lock);
         VERIFY(!m_device_identifiers.is_empty());
@@ -199,10 +198,11 @@ ErrorOr<void> Access::fast_enumerate(Function<void(DeviceIdentifier const&)>& ca
 DeviceIdentifier const& Access::get_device_identifier(Address address) const
 {
     for (auto& device_identifier : m_device_identifiers) {
-        if (device_identifier.address().domain() == address.domain()
-            && device_identifier.address().bus() == address.bus()
-            && device_identifier.address().device() == address.device()
-            && device_identifier.address().function() == address.function()) {
+        auto device_address = device_identifier->address();
+        if (device_address.domain() == address.domain()
+            && device_address.bus() == address.bus()
+            && device_address.device() == address.device()
+            && device_address.function() == address.function()) {
             return device_identifier;
         }
     }

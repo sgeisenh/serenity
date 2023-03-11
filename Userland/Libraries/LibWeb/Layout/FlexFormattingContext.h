@@ -61,6 +61,21 @@ private:
         float scaled_flex_shrink_factor { 0 };
         float desired_flex_fraction { 0 };
 
+        CSSPixels outer_hypothetical_main_size() const
+        {
+            return hypothetical_main_size + margins.main_before + margins.main_after + borders.main_before + borders.main_after + padding.main_before + padding.main_after;
+        }
+
+        CSSPixels outer_target_main_size() const
+        {
+            return target_main_size + margins.main_before + margins.main_after + borders.main_before + borders.main_after + padding.main_before + padding.main_after;
+        }
+
+        CSSPixels outer_flex_base_size() const
+        {
+            return flex_base_size + margins.main_before + margins.main_after + borders.main_before + borders.main_after + padding.main_before + padding.main_after;
+        }
+
         // The used main size of this flex item. Empty until determined.
         Optional<CSSPixels> main_size {};
 
@@ -87,16 +102,19 @@ private:
     };
 
     struct FlexLine {
-        Vector<FlexItem*> items;
+        Vector<FlexItem&> items;
         CSSPixels cross_size { 0 };
         CSSPixels remaining_free_space { 0 };
         float chosen_flex_fraction { 0 };
+
+        float sum_of_flex_factor_of_unfrozen_items() const;
+        float sum_of_scaled_flex_shrink_factor_of_unfrozen_items() const;
     };
 
     bool has_definite_main_size(Box const&) const;
     bool has_definite_cross_size(Box const&) const;
-    CSSPixels specified_main_size(Box const&) const;
-    CSSPixels specified_cross_size(Box const&) const;
+    CSSPixels inner_main_size(Box const&) const;
+    CSSPixels inner_cross_size(Box const&) const;
     CSSPixels resolved_definite_main_size(FlexItem const&) const;
     CSSPixels resolved_definite_cross_size(FlexItem const&) const;
     bool has_main_min_size(Box const&) const;
@@ -120,8 +138,8 @@ private:
     CSS::Size const& computed_cross_min_size(Box const&) const;
     CSS::Size const& computed_cross_max_size(Box const&) const;
 
-    CSSPixels get_pixel_width(Box const& box, Optional<CSS::Size> const& length_percentage) const;
-    CSSPixels get_pixel_height(Box const& box, Optional<CSS::Size> const& length_percentage) const;
+    CSSPixels get_pixel_width(Box const&, CSS::Size const&) const;
+    CSSPixels get_pixel_height(Box const&, CSS::Size const&) const;
 
     bool flex_item_is_stretched(FlexItem const&) const;
 
@@ -145,6 +163,7 @@ private:
     void collect_flex_items_into_flex_lines();
 
     void resolve_flexible_lengths();
+    void resolve_flexible_lengths_for_line(FlexLine&);
 
     void resolve_cross_axis_auto_margins();
 

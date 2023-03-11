@@ -10,13 +10,13 @@
 #include <LibWeb/Layout/FlexFormattingContext.h>
 #include <LibWeb/Layout/FormattingContext.h>
 #include <LibWeb/Layout/GridFormattingContext.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
 #include <LibWeb/Layout/ReplacedBox.h>
 #include <LibWeb/Layout/SVGFormattingContext.h>
 #include <LibWeb/Layout/SVGSVGBox.h>
 #include <LibWeb/Layout/TableBox.h>
 #include <LibWeb/Layout/TableCellBox.h>
 #include <LibWeb/Layout/TableFormattingContext.h>
+#include <LibWeb/Layout/Viewport.h>
 
 namespace Web::Layout {
 
@@ -161,7 +161,7 @@ OwnPtr<FormattingContext> FormattingContext::create_independent_formatting_conte
     // The child box is a block container that doesn't create its own BFC.
     // It will be formatted by this BFC.
     if (!child_display.is_flow_inside()) {
-        dbgln("FIXME: Child box doesn't create BFC, but inside is also not flow! display={}", child_display.to_deprecated_string());
+        dbgln("FIXME: Child box doesn't create BFC, but inside is also not flow! display={}", MUST(child_display.to_string()));
         // HACK: Instead of crashing, create a dummy formatting context that does nothing.
         // FIXME: Remove this once it's no longer needed. It currently swallows problem with standalone
         //        table-related boxes that don't get fixed up by CSS anonymous table box generation.
@@ -1283,8 +1283,10 @@ CSS::Length FormattingContext::calculate_inner_height(Layout::Box const& box, Av
 
     auto& computed_values = box.computed_values();
     if (computed_values.box_sizing() == CSS::BoxSizing::BorderBox) {
-        auto const padding_top = computed_values.padding().top().resolved(box, height_of_containing_block_as_length_for_resolve).resolved(box);
-        auto const padding_bottom = computed_values.padding().bottom().resolved(box, height_of_containing_block_as_length_for_resolve).resolved(box);
+        auto width_of_containing_block = CSS::Length::make_px(containing_block_width_for(box));
+
+        auto const padding_top = computed_values.padding().top().resolved(box, width_of_containing_block).resolved(box);
+        auto const padding_bottom = computed_values.padding().bottom().resolved(box, width_of_containing_block).resolved(box);
 
         auto inner_height = height.resolved(box, height_of_containing_block_as_length_for_resolve).resolved(box).to_px(box)
             - computed_values.border_top().width

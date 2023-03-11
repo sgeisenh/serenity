@@ -6,12 +6,13 @@
 
 #include <AK/Assertions.h>
 #include <AK/Format.h>
+#include <AK/HashTable.h>
 #include <AK/IPv4Address.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Types.h>
 #include <Kernel/API/SyscallString.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
 #include <errno.h>
@@ -818,8 +819,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     Vector<StringView> child_argv;
 
     StringView output_filename;
-    char const* exclude_syscalls_option = nullptr;
-    char const* include_syscalls_option = nullptr;
+    StringView exclude_syscalls_option;
+    StringView include_syscalls_option;
     HashTable<StringView> exclude_syscalls;
     HashTable<StringView> include_syscalls;
 
@@ -836,12 +837,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     parser.parse(arguments);
 
     auto trace_file = output_filename.is_empty()
-        ? TRY(Core::Stream::File::standard_error())
-        : TRY(Core::Stream::File::open(output_filename, Core::Stream::OpenMode::Write));
+        ? TRY(Core::File::standard_error())
+        : TRY(Core::File::open(output_filename, Core::File::OpenMode::Write));
 
-    auto parse_syscalls = [](char const* option, auto& hash_table) {
-        if (option != nullptr) {
-            for (auto syscall : StringView { option, strlen(option) }.split_view(','))
+    auto parse_syscalls = [](StringView option, auto& hash_table) {
+        if (!option.is_empty()) {
+            for (auto syscall : option.split_view(','))
                 hash_table.set(syscall);
         }
     };

@@ -5,11 +5,10 @@
  */
 
 #include "ChessSettingsWidget.h"
-#include "AK/String.h"
 #include <Applications/GamesSettings/ChessSettingsWidgetGML.h>
 #include <LibChess/Chess.h>
 #include <LibConfig/Client.h>
-#include <LibCore/DirIterator.h>
+#include <LibCore/Directory.h>
 #include <LibGUI/CheckBox.h>
 #include <LibGUI/ComboBox.h>
 #include <LibGUI/Frame.h>
@@ -162,27 +161,28 @@ private:
         // To show all the piece graphics, we need at least 12 squares visible.
         // With the same preview size as we use for card games, a nice fit is 2 ranks of 6.
         // There are definitely better ways of doing this, but it'll do. ;^)
-        size_t tile_size = 61;
+        auto square_size = 61;
+        auto square_margin = square_size / 10;
 
         auto rect_for_square = [&](Chess::Square const& square) {
             return Gfx::IntRect {
-                frame_inner_rect().left() + square.file * tile_size,
-                frame_inner_rect().bottom() + 1 - (square.rank + 1) * tile_size,
-                tile_size,
-                tile_size
+                frame_inner_rect().left() + square.file * square_size,
+                frame_inner_rect().bottom() + 1 - (square.rank + 1) * square_size,
+                square_size,
+                square_size
             };
         };
 
         for (int rank = 0; rank < 3; ++rank) {
             for (int file = 0; file < 8; ++file) {
                 Chess::Square square { rank, file };
-                auto tile_rect = rect_for_square(square);
-                painter.fill_rect(tile_rect, square.is_light() ? m_light_square_color : m_dark_square_color);
+                auto square_rect = rect_for_square(square);
+                painter.fill_rect(square_rect, square.is_light() ? m_light_square_color : m_dark_square_color);
 
                 if (m_show_coordinates) {
                     auto coord = square.to_algebraic();
                     auto text_color = square.is_light() ? m_dark_square_color : m_light_square_color;
-                    auto shrunken_rect = tile_rect.shrunken(4, 4);
+                    auto shrunken_rect = square_rect.shrunken(4, 4);
 
                     if (square.rank == 0)
                         painter.draw_text(shrunken_rect, coord.substring_view(0, 1), coordinate_font, Gfx::TextAlignment::BottomRight, text_color);
@@ -196,7 +196,7 @@ private:
         auto draw_piece = [&](Chess::Piece const& piece, Chess::Square const& square) {
             auto& bitmap = *m_piece_images.get(piece).value();
             painter.draw_scaled_bitmap(
-                rect_for_square(square),
+                rect_for_square(square).shrunken(square_margin, square_margin, square_margin, square_margin),
                 bitmap,
                 bitmap.rect(),
                 1.0f,
@@ -243,9 +243,10 @@ ErrorOr<void> ChessSettingsWidget::initialize()
     m_preview = find_descendant_of_type_named<ChessGamePreview>("chess_preview");
 
     m_piece_set_combobox = find_descendant_of_type_named<GUI::ComboBox>("piece_set");
-    Core::DirIterator piece_set_iterator { "/res/icons/chess/sets/", Core::DirIterator::SkipParentAndBaseDir };
-    while (piece_set_iterator.has_next())
-        m_piece_sets.append(piece_set_iterator.next_path());
+    TRY(Core::Directory::for_each_entry("/res/icons/chess/sets/"sv, Core::DirIterator::SkipParentAndBaseDir, [&](auto const& entry, auto&) -> ErrorOr<IterationDecision> {
+        TRY(m_piece_sets.try_append(entry.name));
+        return IterationDecision::Continue;
+    }));
     auto piece_set_model = GUI::ItemListModel<DeprecatedString>::create(m_piece_sets);
     m_piece_set_combobox->set_model(piece_set_model);
     m_piece_set_combobox->set_text(piece_set_name, GUI::AllowCallback::No);

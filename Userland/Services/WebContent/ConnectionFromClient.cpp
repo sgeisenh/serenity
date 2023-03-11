@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2022, Tobias Christiansen <tobyase@serenityos.org>
@@ -24,7 +24,7 @@
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
 #include <LibWeb/HTML/Storage.h>
 #include <LibWeb/HTML/Window.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
+#include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Loader/ContentFilter.h>
 #include <LibWeb/Loader/ProxyMappings.h>
 #include <LibWeb/Loader/ResourceLoader.h>
@@ -38,7 +38,7 @@
 
 namespace WebContent {
 
-ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket> socket)
     : IPC::ConnectionFromClient<WebContentClientEndpoint, WebContentServerEndpoint>(*this, move(socket), 1)
     , m_page_host(PageHost::create(*this))
 {
@@ -117,7 +117,7 @@ void ConnectionFromClient::set_viewport_rect(Gfx::IntRect const& rect)
 
 void ConnectionFromClient::add_backing_store(i32 backing_store_id, Gfx::ShareableBitmap const& bitmap)
 {
-    m_backing_stores.set(backing_store_id, *bitmap.bitmap());
+    m_backing_stores.set(backing_store_id, *const_cast<Gfx::ShareableBitmap&>(bitmap).bitmap());
 }
 
 void ConnectionFromClient::remove_backing_store(i32 backing_store_id)
@@ -204,15 +204,15 @@ void ConnectionFromClient::debug_request(DeprecatedString const& request, Deprec
 
     if (request == "dump-layout-tree") {
         if (auto* doc = page().top_level_browsing_context().active_document()) {
-            if (auto* icb = doc->layout_node())
-                Web::dump_tree(*icb);
+            if (auto* viewport = doc->layout_node())
+                Web::dump_tree(*viewport);
         }
     }
 
     if (request == "dump-stacking-context-tree") {
         if (auto* doc = page().top_level_browsing_context().active_document()) {
-            if (auto* icb = doc->layout_node()) {
-                if (auto* stacking_context = icb->paint_box()->stacking_context())
+            if (auto* viewport = doc->layout_node()) {
+                if (auto* stacking_context = viewport->paint_box()->stacking_context())
                     stacking_context->dump();
             }
         }
@@ -258,8 +258,8 @@ void ConnectionFromClient::debug_request(DeprecatedString const& request, Deprec
     }
 
     if (request == "dump-local-storage") {
-        if (auto* doc = page().top_level_browsing_context().active_document())
-            doc->window().local_storage()->dump();
+        if (auto* document = page().top_level_browsing_context().active_document())
+            document->window().local_storage().release_value_but_fixme_should_propagate_errors()->dump();
     }
 }
 
@@ -549,14 +549,14 @@ void ConnectionFromClient::set_window_size(Gfx::IntSize size)
 Messages::WebContentServer::GetLocalStorageEntriesResponse ConnectionFromClient::get_local_storage_entries()
 {
     auto* document = page().top_level_browsing_context().active_document();
-    auto local_storage = document->window().local_storage();
+    auto local_storage = document->window().local_storage().release_value_but_fixme_should_propagate_errors();
     return local_storage->map();
 }
 
 Messages::WebContentServer::GetSessionStorageEntriesResponse ConnectionFromClient::get_session_storage_entries()
 {
     auto* document = page().top_level_browsing_context().active_document();
-    auto session_storage = document->window().session_storage();
+    auto session_storage = document->window().session_storage().release_value_but_fixme_should_propagate_errors();
     return session_storage->map();
 }
 

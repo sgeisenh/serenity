@@ -16,6 +16,11 @@
 #    include <AK/Math.h>
 #endif
 
+// Solaris' definition of signbit in math_c99.h conflicts with our implementation.
+#ifdef AK_OS_SOLARIS
+#    undef signbit
+#endif
+
 namespace AK {
 
 // FIXME: this always uses round to nearest break-tie to even
@@ -36,11 +41,13 @@ public:
     {
     }
 
+#ifndef KERNEL
     template<FloatingPoint F>
-    constexpr FixedPoint(F value)
-        : m_value(static_cast<Underlying>(value * (static_cast<Underlying>(1) << precision)))
+    FixedPoint(F value)
+        : m_value(round_to<Underlying>(value * (static_cast<Underlying>(1) << precision)))
     {
     }
+#endif
 
     template<size_t P, typename U>
     explicit constexpr FixedPoint(FixedPoint<P, U> const& other)
@@ -93,6 +100,15 @@ public:
     constexpr This fract() const
     {
         return create_raw(m_value & radix_mask);
+    }
+
+    constexpr This clamp(This minimum, This maximum) const
+    {
+        if (*this < minimum)
+            return minimum;
+        if (*this > maximum)
+            return maximum;
+        return *this;
     }
 
     constexpr This round() const
@@ -420,10 +436,14 @@ struct Formatter<FixedPoint<precision, Underlying>> : StandardFormatter {
         m_width = m_width.value_or(0);
         m_precision = m_precision.value_or(6);
 
+        bool is_negative = false;
+        if constexpr (IsSigned<Underlying>)
+            is_negative = value < 0;
+
         i64 integer = value.ltrunk();
         constexpr u64 one = static_cast<Underlying>(1) << precision;
         u64 fraction_raw = value.raw() & (one - 1);
-        return builder.put_fixed_point(integer, fraction_raw, one, base, upper_case, m_zero_pad, m_align, m_width.value(), m_precision.value(), m_fill, m_sign_mode, real_number_display_mode);
+        return builder.put_fixed_point(is_negative, integer, fraction_raw, one, base, upper_case, m_zero_pad, m_align, m_width.value(), m_precision.value(), m_fill, m_sign_mode, real_number_display_mode);
     }
 };
 

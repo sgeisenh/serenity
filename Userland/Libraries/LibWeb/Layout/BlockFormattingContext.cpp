@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/TemporaryChange.h>
 #include <LibWeb/CSS/Length.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/Dump.h>
@@ -11,7 +12,6 @@
 #include <LibWeb/Layout/BlockContainer.h>
 #include <LibWeb/Layout/BlockFormattingContext.h>
 #include <LibWeb/Layout/Box.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
 #include <LibWeb/Layout/InlineFormattingContext.h>
 #include <LibWeb/Layout/LineBuilder.h>
 #include <LibWeb/Layout/ListItemBox.h>
@@ -19,6 +19,7 @@
 #include <LibWeb/Layout/ReplacedBox.h>
 #include <LibWeb/Layout/TableBox.h>
 #include <LibWeb/Layout/TableWrapper.h>
+#include <LibWeb/Layout/Viewport.h>
 
 namespace Web::Layout {
 
@@ -37,11 +38,6 @@ BlockFormattingContext::~BlockFormattingContext()
     }
 }
 
-bool BlockFormattingContext::is_initial() const
-{
-    return is<InitialContainingBlock>(root());
-}
-
 CSSPixels BlockFormattingContext::automatic_content_height() const
 {
     return compute_auto_height_for_block_formatting_context_root(root());
@@ -49,8 +45,8 @@ CSSPixels BlockFormattingContext::automatic_content_height() const
 
 void BlockFormattingContext::run(Box const&, LayoutMode layout_mode, AvailableSpace const& available_space)
 {
-    if (is_initial()) {
-        layout_initial_containing_block(layout_mode, available_space);
+    if (is<Viewport>(root())) {
+        layout_viewport(layout_mode, available_space);
         return;
     }
 
@@ -433,7 +429,7 @@ CSSPixels BlockFormattingContext::compute_auto_height_for_block_level_element(Bo
             auto const& child_box_state = m_state.get(*child_box);
 
             // Ignore anonymous block containers with no lines. These don't count as in-flow block boxes.
-            if (child_box->is_anonymous() && child_box->is_block_container() && child_box_state.line_boxes.is_empty())
+            if (!child_box->is_table_wrapper() && child_box->is_anonymous() && child_box->is_block_container() && child_box_state.line_boxes.is_empty())
                 continue;
 
             auto margin_bottom = m_margin_state.current_collapsed_margin();
@@ -450,7 +446,7 @@ CSSPixels BlockFormattingContext::compute_auto_height_for_block_level_element(Bo
     return 0;
 }
 
-void BlockFormattingContext::layout_block_level_box(Box const& box, BlockContainer const& block_container, LayoutMode layout_mode, CSSPixels& bottom_of_lowest_margin_box, AvailableSpace const& available_space, CSSPixels& current_y)
+void BlockFormattingContext::layout_block_level_box(Box const& box, BlockContainer const& block_container, LayoutMode layout_mode, CSSPixels& bottom_of_lowest_margin_box, AvailableSpace const& available_space)
 {
     auto& box_state = m_state.get_mutable(box);
 
@@ -463,9 +459,11 @@ void BlockFormattingContext::layout_block_level_box(Box const& box, BlockContain
     if (is<ListItemMarkerBox>(box))
         return;
 
+    auto const y = m_y_offset_of_current_block_container.value();
+
     if (box.is_floating()) {
         auto margin_top = !m_margin_state.has_block_container_waiting_for_final_y_position() ? m_margin_state.current_collapsed_margin() : 0;
-        layout_floating_box(box, block_container, layout_mode, available_space, margin_top + current_y);
+        layout_floating_box(box, block_container, layout_mode, available_space, margin_top + y);
         bottom_of_lowest_margin_box = max(bottom_of_lowest_margin_box, box_state.offset.y() + box_state.content_height() + box_state.margin_box_bottom());
         return;
     }
@@ -489,7 +487,7 @@ void BlockFormattingContext::layout_block_level_box(Box const& box, BlockContain
         margin_top = 0;
     }
 
-    place_block_level_element_in_normal_flow_vertically(box, current_y + margin_top);
+    place_block_level_element_in_normal_flow_vertically(box, y + margin_top);
     place_block_level_element_in_normal_flow_horizontally(box, available_space);
 
     OwnPtr<FormattingContext> independent_formatting_context;
@@ -510,7 +508,7 @@ void BlockFormattingContext::layout_block_level_box(Box const& box, BlockContain
                 } else if (!m_margin_state.has_block_container_waiting_for_final_y_position()) {
                     // margin-top of block container can be updated during children layout hence it's final y position yet to be determined
                     m_margin_state.register_block_container_y_position_update_callback([&](CSSPixels margin_top) {
-                        place_block_level_element_in_normal_flow_vertically(box, margin_top + current_y + box_state.border_box_top());
+                        place_block_level_element_in_normal_flow_vertically(box, margin_top + y + box_state.border_box_top());
                     });
                 }
 
@@ -525,7 +523,7 @@ void BlockFormattingContext::layout_block_level_box(Box const& box, BlockContain
         if (!m_margin_state.box_last_in_flow_child_margin_bottom_collapsed) {
             m_margin_state.reset();
         }
-        current_y = box_state.offset.y() + box_state.content_height() + box_state.border_box_bottom();
+        m_y_offset_of_current_block_container = box_state.offset.y() + box_state.content_height() + box_state.border_box_bottom();
     }
     m_margin_state.box_last_in_flow_child_margin_bottom_collapsed = false;
 
@@ -549,10 +547,10 @@ void BlockFormattingContext::layout_block_level_children(BlockContainer const& b
     VERIFY(!block_container.children_are_inline());
 
     CSSPixels bottom_of_lowest_margin_box = 0;
-    CSSPixels current_y = 0;
 
+    TemporaryChange<Optional<CSSPixels>> change { m_y_offset_of_current_block_container, CSSPixels(0) };
     block_container.for_each_child_of_type<Box>([&](Box& box) {
-        layout_block_level_box(box, block_container, layout_mode, bottom_of_lowest_margin_box, available_space, current_y);
+        layout_block_level_box(box, block_container, layout_mode, bottom_of_lowest_margin_box, available_space);
         return IterationDecision::Continue;
     });
 
@@ -633,6 +631,8 @@ void BlockFormattingContext::place_block_level_element_in_normal_flow_vertically
             for (auto* containing_block = child_box.containing_block(); containing_block && containing_block != &root(); containing_block = containing_block->containing_block())
                 clearance_y_in_containing_block -= m_state.get(*containing_block).offset.y();
 
+            if (clearance_y_in_containing_block > y)
+                m_y_offset_of_current_block_container = clearance_y_in_containing_block;
             y = max(y, clearance_y_in_containing_block);
             float_side.clear();
         }
@@ -691,12 +691,12 @@ static void measure_scrollable_overflow(LayoutState const& state, Box const& box
     });
 }
 
-void BlockFormattingContext::layout_initial_containing_block(LayoutMode layout_mode, AvailableSpace const& available_space)
+void BlockFormattingContext::layout_viewport(LayoutMode layout_mode, AvailableSpace const& available_space)
 {
     auto viewport_rect = root().browsing_context().viewport_rect();
 
-    auto& icb = verify_cast<Layout::InitialContainingBlock>(root());
-    auto& icb_state = m_state.get_mutable(icb);
+    auto& viewport = verify_cast<Layout::Viewport>(root());
+    auto& viewport_state = m_state.get_mutable(viewport);
 
     if (root().children_are_inline())
         layout_inline_children(root(), layout_mode, available_space);
@@ -705,11 +705,11 @@ void BlockFormattingContext::layout_initial_containing_block(LayoutMode layout_m
 
     CSSPixels bottom_edge = 0;
     CSSPixels right_edge = 0;
-    measure_scrollable_overflow(m_state, icb, bottom_edge, right_edge);
+    measure_scrollable_overflow(m_state, viewport, bottom_edge, right_edge);
 
     if (bottom_edge >= viewport_rect.height() || right_edge >= viewport_rect.width()) {
         // FIXME: Move overflow data to LayoutState!
-        auto& overflow_data = icb_state.ensure_overflow_data();
+        auto& overflow_data = viewport_state.ensure_overflow_data();
         overflow_data.scrollable_overflow_rect = viewport_rect;
         // NOTE: The edges are *within* the rectangle, so we add 1 to get the width and height.
         overflow_data.scrollable_overflow_rect.set_size(right_edge + 1, bottom_edge + 1);
@@ -866,7 +866,7 @@ void BlockFormattingContext::layout_list_item_marker(ListItemBox const& list_ite
         image_height = list_style_image->natural_height().value_or(0);
     }
 
-    CSSPixels default_marker_width = max(4, marker.font().glyph_height() - 4);
+    CSSPixels default_marker_width = max(4, marker.font().pixel_size_rounded_up() - 4);
 
     if (marker.text().is_empty()) {
         marker_state.set_content_width((image_width + default_marker_width).value());
@@ -875,7 +875,7 @@ void BlockFormattingContext::layout_list_item_marker(ListItemBox const& list_ite
         marker_state.set_content_width((image_width + text_width).value());
     }
 
-    marker_state.set_content_height(max(image_height, marker.font().glyph_height() + 1).value());
+    marker_state.set_content_height(max(image_height, marker.font().pixel_size_rounded_up() + 1).value());
 
     marker_state.set_content_offset({ -(marker_state.content_width() + default_marker_width),
         max(CSSPixels(0.f), (CSSPixels(marker.line_height()) - marker_state.content_height()) / 2.f) });

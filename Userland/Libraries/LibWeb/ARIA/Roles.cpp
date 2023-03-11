@@ -28,13 +28,13 @@ StringView role_name(Role role)
 Optional<Role> role_from_string(StringView role_name)
 {
     // Note: "switch" is mapped to Role::switch_ (due to C++ keyword clash)
-#define __ENUMERATE_ARIA_ROLE(name)                     \
-    if constexpr (Role::name == Role::switch_) {        \
-        if (role_name.equals_ignoring_case("switch"sv)) \
-            return Role::switch_;                       \
-    } else {                                            \
-        if (role_name.equals_ignoring_case(#name##sv))  \
-            return Role::name;                          \
+#define __ENUMERATE_ARIA_ROLE(name)                           \
+    if constexpr (Role::name == Role::switch_) {              \
+        if (role_name.equals_ignoring_ascii_case("switch"sv)) \
+            return Role::switch_;                             \
+    } else {                                                  \
+        if (role_name.equals_ignoring_ascii_case(#name##sv))  \
+            return Role::name;                                \
     }
     ENUMERATE_ARIA_ROLES
 #undef __ENUMERATE_ARIA_ROLE
@@ -176,6 +176,31 @@ bool is_non_abstract_role(Role role)
         || is_landmark_role(role)
         || is_live_region_role(role)
         || is_windows_role(role);
+}
+
+// https://www.w3.org/TR/wai-aria-1.2/#namefromcontent
+bool allows_name_from_content(Role role)
+{
+    return first_is_one_of(role,
+        Role::button,
+        Role::cell,
+        Role::checkbox,
+        Role::columnheader,
+        Role::gridcell,
+        Role::heading,
+        Role::link,
+        Role::menuitem,
+        Role::menuitemcheckbox,
+        Role::menuitemradio,
+        Role::option,
+        Role::radio,
+        Role::row,
+        Role::rowheader,
+        Role::sectionhead,
+        Role::switch_,
+        Role::tab,
+        Role::tooltip,
+        Role::treeitem);
 }
 
 }

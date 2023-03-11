@@ -19,7 +19,7 @@
 #include <unistd.h>
 
 RefPtr<Line::Editor> g_line_editor;
-static OwnPtr<AK::Stream> g_stdout {};
+static OwnPtr<Stream> g_stdout {};
 static OwnPtr<Wasm::Printer> g_printer {};
 static bool g_continue { false };
 static void (*old_signal)(int);
@@ -206,15 +206,17 @@ static bool pre_interpret_hook(Wasm::Configuration& config, Wasm::InstructionPoi
             Wasm::Result result { Wasm::Trap {} };
             {
                 Wasm::BytecodeInterpreter::CallFrameHandle handle { g_interpreter, config };
-                result = config.call(g_interpreter, *address, move(values));
+                result = config.call(g_interpreter, *address, move(values)).assert_wasm_result();
             }
-            if (result.is_trap())
+            if (result.is_trap()) {
                 warnln("Execution trapped: {}", result.trap().reason);
-            if (!result.values().is_empty())
-                warnln("Returned:");
-            for (auto& value : result.values()) {
-                g_stdout->write("  -> "sv.bytes()).release_value_but_fixme_should_propagate_errors();
-                g_printer->print(value);
+            } else {
+                if (!result.values().is_empty())
+                    warnln("Returned:");
+                for (auto& value : result.values()) {
+                    g_stdout->write("  -> "sv.bytes()).release_value_but_fixme_should_propagate_errors();
+                    g_printer->print(value);
+                }
             }
             continue;
         }
@@ -252,8 +254,8 @@ static Optional<Wasm::Module> parse(StringView filename)
         return {};
     }
 
-    auto stream = FixedMemoryStream::construct(ReadonlyBytes { result.value()->data(), result.value()->size() }).release_value_but_fixme_should_propagate_errors();
-    auto parse_result = Wasm::Module::parse(*stream);
+    FixedMemoryStream stream { ReadonlyBytes { result.value()->data(), result.value()->size() } };
+    auto parse_result = Wasm::Module::parse(stream);
     if (parse_result.is_error()) {
         warnln("Something went wrong, either the file is invalid, or there's a bug with LibWasm!");
         warnln("The parse error was {}", Wasm::parse_error_to_deprecated_string(parse_result.error()));
@@ -294,9 +296,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         .long_name = "link",
         .short_name = 'l',
         .value_name = "file",
-        .accept_value = [&](char const* str) {
-            if (auto v = StringView { str, strlen(str) }; !v.is_empty()) {
-                modules_to_link_in.append(v);
+        .accept_value = [&](StringView str) {
+            if (!str.is_empty()) {
+                modules_to_link_in.append(str);
                 return true;
             }
             return false;
@@ -308,8 +310,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         .long_name = "arg",
         .short_name = 0,
         .value_name = "u64",
-        .accept_value = [&](char const* str) -> bool {
-            if (auto v = StringView { str, strlen(str) }.to_uint<u64>(); v.has_value()) {
+        .accept_value = [&](StringView str) -> bool {
+            if (auto v = str.to_uint<u64>(); v.has_value()) {
                 values_to_push.append(v.value());
                 return true;
             }
@@ -339,7 +341,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     if (!parse_result.has_value())
         return 1;
 
-    g_stdout = TRY(Core::Stream::File::standard_output());
+    g_stdout = TRY(Core::File::standard_output());
     g_printer = TRY(try_make<Wasm::Printer>(*g_stdout));
 
     if (print && !attempt_instantiate) {
@@ -357,7 +359,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         }
 
         // First, resolve the linked modules
-        NonnullOwnPtrVector<Wasm::ModuleInstance> linked_instances;
+        Vector<NonnullOwnPtr<Wasm::ModuleInstance>> linked_instances;
         Vector<Wasm::Module> linked_modules;
         for (auto& name : modules_to_link_in) {
             auto parse_result = parse(name);
@@ -368,7 +370,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             linked_modules.append(parse_result.release_value());
             Wasm::Linker linker { linked_modules.last() };
             for (auto& instance : linked_instances)
-                linker.link(instance);
+                linker.link(*instance);
             auto link_result = linker.finish();
             if (link_result.is_error()) {
                 warnln("Linking imported module '{}' failed", name);
@@ -385,7 +387,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
         Wasm::Linker linker { parse_result.value() };
         for (auto& instance : linked_instances)
-            linker.link(instance);
+            linker.link(*instance);
 
         if (export_all_imports) {
             HashMap<Wasm::Linker::Name, Wasm::ExternValue> exports;
@@ -513,7 +515,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                 outln();
             }
 
-            auto result = machine.invoke(g_interpreter, run_address.value(), move(values));
+            auto result = machine.invoke(g_interpreter, run_address.value(), move(values)).assert_wasm_result();
 
             if (debug)
                 launch_repl();

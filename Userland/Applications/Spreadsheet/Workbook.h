@@ -8,18 +8,17 @@
 
 #include "Forward.h"
 #include "Spreadsheet.h"
-#include <AK/NonnullOwnPtrVector.h>
 
 namespace Spreadsheet {
 
 class Workbook {
 public:
-    Workbook(NonnullRefPtrVector<Sheet>&& sheets, GUI::Window& parent_window);
+    Workbook(Vector<NonnullRefPtr<Sheet>>&& sheets, GUI::Window& parent_window);
 
-    ErrorOr<void, DeprecatedString> open_file(String const& filename, Core::Stream::File&);
-    ErrorOr<void> write_to_file(String const& filename, Core::Stream::File&);
+    ErrorOr<void, DeprecatedString> open_file(String const& filename, Core::File&);
+    ErrorOr<void> write_to_file(String const& filename, Core::File&);
 
-    ErrorOr<bool, DeprecatedString> import_file(String const& filename, Core::Stream::File&);
+    ErrorOr<bool, DeprecatedString> import_file(String const& filename, Core::File&);
 
     DeprecatedString const& current_filename() const { return m_current_filename; }
     bool set_filename(DeprecatedString const& filename);
@@ -28,8 +27,8 @@ public:
 
     bool has_sheets() const { return !m_sheets.is_empty(); }
 
-    NonnullRefPtrVector<Sheet> const& sheets() const { return m_sheets; }
-    NonnullRefPtrVector<Sheet> sheets() { return m_sheets; }
+    Vector<NonnullRefPtr<Sheet>> const& sheets() const { return m_sheets; }
+    Vector<NonnullRefPtr<Sheet>> sheets() { return m_sheets; }
 
     Sheet& add_sheet(StringView name)
     {
@@ -43,7 +42,7 @@ public:
     JS::VM const& vm() const { return *m_vm; }
 
 private:
-    NonnullRefPtrVector<Sheet> m_sheets;
+    Vector<NonnullRefPtr<Sheet>> m_sheets;
     NonnullRefPtr<JS::VM> m_vm;
     NonnullOwnPtr<JS::Interpreter> m_interpreter;
     JS::VM::InterpreterExecutionScope m_interpreter_scope;

@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,7 +11,6 @@
 #include <AK/DeprecatedString.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <AK/URL.h>
 #include <AK/Vector.h>
@@ -82,14 +82,13 @@ public:
         HTML
     };
 
-    static JS::NonnullGCPtr<Document> create_and_initialize(Type, DeprecatedString content_type, HTML::NavigationParams);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> create_and_initialize(Type, DeprecatedString content_type, HTML::NavigationParams);
 
-    static JS::NonnullGCPtr<Document> create(JS::Realm&, AK::URL const& url = "about:blank"sv);
-    static JS::NonnullGCPtr<Document> construct_impl(JS::Realm&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> create(JS::Realm&, AK::URL const& url = "about:blank"sv);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> construct_impl(JS::Realm&);
     virtual ~Document() override;
 
-    // https://w3c.github.io/selection-api/#dom-document-getselection
-    JS::GCPtr<Selection::Selection> get_selection();
+    JS::GCPtr<Selection::Selection> get_selection() const;
 
     size_t next_layout_node_serial_id(Badge<Layout::Node>) { return m_next_layout_node_serial_id++; }
     size_t layout_node_count() const { return m_next_layout_node_serial_id; }
@@ -106,7 +105,7 @@ public:
     AK::URL base_url() const;
 
     void update_base_element(Badge<HTML::HTMLBaseElement>);
-    JS::GCPtr<HTML::HTMLBaseElement> first_base_element_with_href_in_tree_order() const;
+    JS::GCPtr<HTML::HTMLBaseElement const> first_base_element_with_href_in_tree_order() const;
 
     DeprecatedString url_string() const { return m_url.to_deprecated_string(); }
     DeprecatedString document_uri() const { return m_url.to_deprecated_string(); }
@@ -196,8 +195,8 @@ public:
 
     virtual bool is_child_allowed(Node const&) const override;
 
-    Layout::InitialContainingBlock const* layout_node() const;
-    Layout::InitialContainingBlock* layout_node();
+    Layout::Viewport const* layout_node() const;
+    Layout::Viewport* layout_node();
 
     void schedule_style_update();
     void schedule_layout_update();
@@ -228,6 +227,9 @@ public:
     JS::NonnullGCPtr<Text> create_text_node(DeprecatedString const& data);
     JS::NonnullGCPtr<Comment> create_comment(DeprecatedString const& data);
     WebIDL::ExceptionOr<JS::NonnullGCPtr<ProcessingInstruction>> create_processing_instruction(DeprecatedString const& target, DeprecatedString const& data);
+
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<Attr>> create_attribute(DeprecatedString const& local_name);
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<Attr>> create_attribute_ns(DeprecatedString const& namespace_, DeprecatedString const& qualified_name);
 
     WebIDL::ExceptionOr<JS::NonnullGCPtr<Event>> create_event(DeprecatedString const& interface);
     JS::NonnullGCPtr<Range> create_range();
@@ -285,6 +287,7 @@ public:
     JS::NonnullGCPtr<Document> appropriate_template_contents_owner_document();
 
     DeprecatedString ready_state() const;
+    HTML::DocumentReadyState readiness() const { return m_readiness; };
     void update_readiness(HTML::DocumentReadyState);
 
     HTML::Window& window() const { return const_cast<HTML::Window&>(*m_window); }
@@ -338,8 +341,9 @@ public:
     bool is_active() const;
 
     JS::NonnullGCPtr<HTML::History> history();
+    JS::NonnullGCPtr<HTML::History> history() const;
 
-    HTML::Location* location();
+    WebIDL::ExceptionOr<JS::GCPtr<HTML::Location>> location();
 
     size_t number_of_things_delaying_the_load_event() { return m_number_of_things_delaying_the_load_event; }
     void increment_number_of_things_delaying_the_load_event(Badge<DocumentLoadEventDelayer>);
@@ -477,7 +481,7 @@ private:
 
     JS::GCPtr<HTML::Window> m_window;
 
-    JS::GCPtr<Layout::InitialContainingBlock> m_layout_root;
+    JS::GCPtr<Layout::Viewport> m_layout_root;
 
     Optional<Color> m_link_color;
     Optional<Color> m_active_link_color;
@@ -611,7 +615,10 @@ private:
     JS::GCPtr<Selection::Selection> m_selection;
 
     // NOTE: This is a cache to make finding the first <base href> element O(1).
-    JS::GCPtr<HTML::HTMLBaseElement> m_first_base_element_with_href_in_tree_order;
+    JS::GCPtr<HTML::HTMLBaseElement const> m_first_base_element_with_href_in_tree_order;
 };
+
+template<>
+inline bool Node::fast_is<Document>() const { return is_document(); }
 
 }

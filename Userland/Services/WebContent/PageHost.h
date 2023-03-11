@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -29,7 +29,7 @@ public:
 
     virtual void paint(Web::DevicePixelRect const& content_rect, Gfx::Bitmap&) override;
 
-    void set_palette_impl(Gfx::PaletteImpl const&);
+    void set_palette_impl(Gfx::PaletteImpl&);
     void set_viewport_rect(Web::DevicePixelRect const&);
     void set_screen_rects(Vector<Gfx::IntRect, 4> const& rects, size_t main_screen_index) { m_screen_rect = rects[main_screen_index].to_type<Web::DevicePixels>(); }
     void set_device_pixels_per_css_pixel(float device_pixels_per_css_pixel) { m_device_pixels_per_css_pixel = device_pixels_per_css_pixel; }
@@ -97,11 +97,12 @@ private:
     virtual void page_did_set_cookie(const URL&, Web::Cookie::ParsedCookie const&, Web::Cookie::Source) override;
     virtual void page_did_update_cookie(Web::Cookie::Cookie) override;
     virtual void page_did_update_resource_count(i32) override;
+    virtual void page_did_close_browsing_context(Web::HTML::BrowsingContext const&) override;
     virtual void request_file(Web::FileRequest) override;
 
     explicit PageHost(ConnectionFromClient&);
 
-    Web::Layout::InitialContainingBlock* layout_root();
+    Web::Layout::Viewport* layout_root();
     void setup_palette();
 
     ConnectionFromClient& m_client;

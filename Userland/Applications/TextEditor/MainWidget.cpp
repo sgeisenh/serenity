@@ -10,9 +10,10 @@
 #include <AK/StringBuilder.h>
 #include <AK/URL.h>
 #include <Applications/TextEditor/TextEditorWindowGML.h>
+#include <LibCMake/CMakeCache/SyntaxHighlighter.h>
+#include <LibCMake/SyntaxHighlighter.h>
 #include <LibConfig/Client.h>
 #include <LibCore/Debounce.h>
-#include <LibCore/File.h>
 #include <LibCpp/SyntaxHighlighter.h>
 #include <LibDesktop/Launcher.h>
 #include <LibGUI/Action.h>
@@ -272,11 +273,12 @@ MainWidget::MainWidget()
                 return;
         }
 
-        auto response = FileSystemAccessClient::Client::the().try_open_file_deprecated(window());
+        auto response = FileSystemAccessClient::Client::the().open_file(window());
         if (response.is_error())
             return;
 
-        read_file(*response.value());
+        if (auto result = read_file(response.value().filename(), response.value().stream()); result.is_error())
+            GUI::MessageBox::show(window(), "Unable to open file.\n"sv, "Error"sv, GUI::MessageBox::Type::Error);
     });
 
     m_save_as_action = GUI::CommonActions::make_save_as_action([&](auto&) {
@@ -284,18 +286,19 @@ MainWidget::MainWidget()
         if (extension.is_null() && m_editor->syntax_highlighter())
             extension = Syntax::common_language_extension(m_editor->syntax_highlighter()->language());
 
-        auto response = FileSystemAccessClient::Client::the().try_save_file_deprecated(window(), m_name, extension);
+        auto response = FileSystemAccessClient::Client::the().save_file(window(), m_name, extension);
         if (response.is_error())
             return;
 
         auto file = response.release_value();
-        if (!m_editor->write_to_file(*file)) {
+        if (auto result = m_editor->write_to_file(file.stream()); result.is_error()) {
             GUI::MessageBox::show(window(), "Unable to save file.\n"sv, "Error"sv, GUI::MessageBox::Type::Error);
             return;
         }
 
-        set_path(file->filename());
-        dbgln("Wrote document to {}", file->filename());
+        set_path(file.filename());
+        GUI::Application::the()->set_most_recently_open_file(file.filename());
+        dbgln("Wrote document to {}", file.filename());
     });
 
     m_save_action = GUI::CommonActions::make_save_action([&](auto&) {
@@ -303,17 +306,17 @@ MainWidget::MainWidget()
             m_save_as_action->activate();
             return;
         }
-        auto response = FileSystemAccessClient::Client::the().try_request_file_deprecated(window(), m_path, Core::OpenMode::Truncate | Core::OpenMode::WriteOnly);
+        auto response = FileSystemAccessClient::Client::the().request_file(window(), m_path, Core::File::OpenMode::Truncate | Core::File::OpenMode::Write);
         if (response.is_error())
             return;
 
-        if (!m_editor->write_to_file(*response.value())) {
+        if (auto result = m_editor->write_to_file(response.value().stream()); result.is_error()) {
             GUI::MessageBox::show(window(), "Unable to save file.\n"sv, "Error"sv, GUI::MessageBox::Type::Error);
         }
     });
 
     auto file_manager_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/app-file-manager.png"sv).release_value_but_fixme_should_propagate_errors();
-    m_open_folder_action = GUI::Action::create("Open Containing Folder", { Mod_Ctrl | Mod_Shift, Key_O }, file_manager_icon, [&](auto&) {
+    m_open_folder_action = GUI::Action::create("Reveal in File Manager", { Mod_Ctrl | Mod_Shift, Key_O }, file_manager_icon, [&](auto&) {
         auto lexical_path = LexicalPath(m_path);
         Desktop::Launcher::open(URL::create_with_file_scheme(lexical_path.dirname(), lexical_path.basename()));
     });
@@ -374,6 +377,24 @@ void MainWidget::initialize_menubar(GUI::Window& window)
     file_menu.add_separator();
     file_menu.add_action(*m_open_folder_action);
     file_menu.add_separator();
+
+    // FIXME: Propagate errors.
+    (void)file_menu.add_recent_files_list([&](auto& action) {
+        if (editor().document().is_modified()) {
+            auto save_document_first_result = GUI::MessageBox::ask_about_unsaved_changes(&window, m_path, editor().document().undo_stack().last_unmodified_timestamp());
+            if (save_document_first_result == GUI::Dialog::ExecResult::Yes)
+                m_save_action->activate();
+            if (save_document_first_result != GUI::Dialog::ExecResult::No && editor().document().is_modified())
+                return;
+        }
+
+        auto response = FileSystemAccessClient::Client::the().request_file(&window, action.text(), Core::File::OpenMode::Read);
+        if (response.is_error())
+            return;
+
+        if (auto result = read_file(response.value().filename(), response.value().stream()); result.is_error())
+            GUI::MessageBox::show(&window, "Unable to open file.\n"sv, "Error"sv, GUI::MessageBox::Type::Error);
+    });
     file_menu.add_action(GUI::CommonActions::make_quit_action([this](auto&) {
         if (!request_close())
             return;
@@ -596,6 +617,20 @@ void MainWidget::initialize_menubar(GUI::Window& window)
     syntax_actions.add_action(*m_cpp_highlight);
     syntax_menu.add_action(*m_cpp_highlight);
 
+    m_cmake_highlight = GUI::Action::create_checkable("C&Make", [&](auto&) {
+        m_editor->set_syntax_highlighter(make<CMake::SyntaxHighlighter>());
+        m_editor->update();
+    });
+    syntax_actions.add_action(*m_cmake_highlight);
+    syntax_menu.add_action(*m_cmake_highlight);
+
+    m_cmakecache_highlight = GUI::Action::create_checkable("CM&akeCache", [&](auto&) {
+        m_editor->set_syntax_highlighter(make<CMake::Cache::SyntaxHighlighter>());
+        m_editor->update();
+    });
+    syntax_actions.add_action(*m_cmakecache_highlight);
+    syntax_menu.add_action(*m_cmakecache_highlight);
+
     m_js_highlight = GUI::Action::create_checkable("&JavaScript", [&](auto&) {
         m_editor->set_syntax_highlighter(make<JS::SyntaxHighlighter>());
         m_editor->update();
@@ -676,6 +711,8 @@ void MainWidget::initialize_menubar(GUI::Window& window)
 
     m_syntax_statusbar_menu->add_action(*m_plain_text_highlight);
     m_syntax_statusbar_menu->add_action(*m_cpp_highlight);
+    m_syntax_statusbar_menu->add_action(*m_cmake_highlight);
+    m_syntax_statusbar_menu->add_action(*m_cmakecache_highlight);
     m_syntax_statusbar_menu->add_action(*m_css_highlight);
     m_syntax_statusbar_menu->add_action(*m_git_highlight);
     m_syntax_statusbar_menu->add_action(*m_gml_highlight);
@@ -702,6 +739,10 @@ void MainWidget::set_path(StringView path)
     if (m_extension == "c" || m_extension == "cc" || m_extension == "cxx" || m_extension == "cpp" || m_extension == "c++"
         || m_extension == "h" || m_extension == "hh" || m_extension == "hxx" || m_extension == "hpp" || m_extension == "h++") {
         m_cpp_highlight->activate();
+    } else if (m_extension == "cmake" || (m_extension == "txt" && m_name == "CMakeLists")) {
+        m_cmake_highlight->activate();
+    } else if (m_extension == "txt" && m_name == "CMakeCache") {
+        m_cmakecache_highlight->activate();
     } else if (m_extension == "js" || m_extension == "mjs" || m_extension == "json") {
         m_js_highlight->activate();
     } else if (m_name == "COMMIT_EDITMSG") {
@@ -746,12 +787,13 @@ void MainWidget::update_title()
     window()->set_title(builder.to_deprecated_string());
 }
 
-bool MainWidget::read_file(Core::File& file)
+ErrorOr<void> MainWidget::read_file(String const& filename, Core::File& file)
 {
-    m_editor->set_text(file.read_all());
-    set_path(file.filename());
+    m_editor->set_text(TRY(file.read_until_eof()));
+    set_path(filename);
+    GUI::Application::the()->set_most_recently_open_file(filename);
     m_editor->set_focus(true);
-    return true;
+    return {};
 }
 
 void MainWidget::open_nonexistent_file(DeprecatedString const& path)
@@ -803,11 +845,11 @@ void MainWidget::drop_event(GUI::DropEvent& event)
         if (!request_close())
             return;
 
-        // TODO: A drop event should be considered user consent for opening a file
-        auto response = FileSystemAccessClient::Client::the().try_request_file_deprecated(window(), urls.first().path(), Core::OpenMode::ReadOnly);
+        auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(window(), urls.first().path());
         if (response.is_error())
             return;
-        read_file(*response.value());
+        if (auto result = read_file(response.value().filename(), response.value().stream()); result.is_error())
+            GUI::MessageBox::show(window(), "Unable to open file.\n"sv, "Error"sv, GUI::MessageBox::Type::Error);
     }
 }
 

@@ -195,7 +195,7 @@ void MoveTool::on_second_paint(Layer const* layer, GUI::PaintEvent& event)
     GUI::Painter painter(*m_editor);
     painter.add_clip_rect(event.rect());
     auto content_rect = m_scaling ? m_new_layer_rect : m_editor->active_layer()->relative_rect();
-    auto rect_in_editor = m_editor->content_to_frame_rect(content_rect).to_rounded<int>();
+    auto rect_in_editor = m_editor->content_to_frame_rect(content_rect).to_type<int>();
     if (m_scaling && (!m_cached_preview_bitmap.is_null() || !update_cached_preview_bitmap(layer).is_error())) {
         Gfx::PainterStateSaver saver(painter);
         painter.add_clip_rect(m_editor->content_rect());
@@ -255,7 +255,7 @@ ErrorOr<void> MoveTool::update_cached_preview_bitmap(Layer const* layer)
 
 Optional<ResizeAnchorLocation const> MoveTool::resize_anchor_location_from_cursor_position(Layer const* layer, MouseEvent& event)
 {
-    auto layer_rect = m_editor->content_to_frame_rect(layer->relative_rect()).to_rounded<int>();
+    auto layer_rect = m_editor->content_to_frame_rect(layer->relative_rect()).to_type<int>();
     auto size = max(resize_anchor_min_size, resize_anchor_size(layer_rect));
 
     auto cursor_within_resize_anchor_rect = [&event, size](Gfx::IntPoint layer_position_in_frame_coordinates) {
@@ -274,7 +274,7 @@ Optional<ResizeAnchorLocation const> MoveTool::resize_anchor_location_from_curso
     return {};
 }
 
-Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> MoveTool::cursor()
+Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap const>> MoveTool::cursor()
 {
     if (m_resize_anchor_location.has_value()) {
         switch (m_resize_anchor_location.value()) {
@@ -289,33 +289,34 @@ Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> MoveTool::cursor()
     return Gfx::StandardCursor::Move;
 }
 
-GUI::Widget* MoveTool::get_properties_widget()
+ErrorOr<GUI::Widget*> MoveTool::get_properties_widget()
 {
     if (!m_properties_widget) {
-        m_properties_widget = GUI::Widget::construct();
-        m_properties_widget->set_layout<GUI::VerticalBoxLayout>();
+        auto properties_widget = TRY(GUI::Widget::try_create());
+        (void)TRY(properties_widget->try_set_layout<GUI::VerticalBoxLayout>());
 
-        auto& selection_mode_container = m_properties_widget->add<GUI::Widget>();
-        selection_mode_container.set_layout<GUI::HorizontalBoxLayout>();
-        selection_mode_container.set_fixed_height(46);
-        auto& selection_mode_label = selection_mode_container.add<GUI::Label>("Selection Mode:");
-        selection_mode_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
-        selection_mode_label.set_fixed_size(80, 40);
+        auto selection_mode_container = TRY(properties_widget->try_add<GUI::Widget>());
+        (void)TRY(selection_mode_container->try_set_layout<GUI::HorizontalBoxLayout>());
+        selection_mode_container->set_fixed_height(46);
+        auto selection_mode_label = TRY(selection_mode_container->try_add<GUI::Label>("Selection Mode:"));
+        selection_mode_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
+        selection_mode_label->set_fixed_size(80, 40);
 
-        auto& mode_radio_container = selection_mode_container.add<GUI::Widget>();
-        mode_radio_container.set_layout<GUI::VerticalBoxLayout>();
-        m_selection_mode_foreground = mode_radio_container.add<GUI::RadioButton>("Foreground");
+        auto mode_radio_container = TRY(selection_mode_container->try_add<GUI::Widget>());
+        (void)TRY(mode_radio_container->try_set_layout<GUI::VerticalBoxLayout>());
+        m_selection_mode_foreground = TRY(mode_radio_container->try_add<GUI::RadioButton>(TRY("Foreground"_string)));
 
-        m_selection_mode_active = mode_radio_container.add<GUI::RadioButton>("Active Layer");
+        m_selection_mode_active = TRY(mode_radio_container->try_add<GUI::RadioButton>(TRY("Active Layer"_string)));
 
-        m_selection_mode_foreground->on_checked = [&](bool) {
+        m_selection_mode_foreground->on_checked = [this](bool) {
             m_layer_selection_mode = LayerSelectionMode::ForegroundLayer;
         };
-        m_selection_mode_active->on_checked = [&](bool) {
+        m_selection_mode_active->on_checked = [this](bool) {
             m_layer_selection_mode = LayerSelectionMode::ActiveLayer;
         };
 
         m_selection_mode_foreground->set_checked(true);
+        m_properties_widget = properties_widget;
     }
 
     return m_properties_widget.ptr();

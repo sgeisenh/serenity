@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,7 +8,6 @@
 #pragma once
 
 #include <AK/HashMap.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
 #include <LibWeb/CSS/CSSFontFaceRule.h>
@@ -27,11 +26,12 @@ struct MatchingRule {
     size_t rule_index { 0 };
     size_t selector_index { 0 };
     u32 specificity { 0 };
+    bool contains_pseudo_element { false };
 };
 
 class PropertyDependencyNode : public RefCounted<PropertyDependencyNode> {
 public:
-    static NonnullRefPtr<PropertyDependencyNode> create(DeprecatedString name)
+    static NonnullRefPtr<PropertyDependencyNode> create(String name)
     {
         return adopt_ref(*new PropertyDependencyNode(move(name)));
     }
@@ -40,10 +40,10 @@ public:
     bool has_cycles();
 
 private:
-    explicit PropertyDependencyNode(DeprecatedString name);
+    explicit PropertyDependencyNode(String name);
 
-    DeprecatedString m_name;
-    NonnullRefPtrVector<PropertyDependencyNode> m_children;
+    String m_name;
+    Vector<NonnullRefPtr<PropertyDependencyNode>> m_children;
     bool m_marked { false };
 };
 
@@ -73,7 +73,7 @@ public:
 
     Gfx::Font const& initial_font() const;
 
-    void did_load_font(DeprecatedFlyString const& family_name);
+    void did_load_font(FlyString const& family_name);
 
     void load_fonts_from_sheet(CSSStyleSheet const&);
 
@@ -87,7 +87,7 @@ private:
     void compute_defaulted_property_value(StyleProperties&, DOM::Element const*, CSS::PropertyID, Optional<CSS::Selector::PseudoElement>) const;
 
     RefPtr<StyleValue> resolve_unresolved_style_value(DOM::Element&, PropertyID, UnresolvedStyleValue const&) const;
-    bool expand_variables(DOM::Element&, StringView property_name, HashMap<DeprecatedFlyString, NonnullRefPtr<PropertyDependencyNode>>& dependencies, Parser::TokenStream<Parser::ComponentValue>& source, Vector<Parser::ComponentValue>& dest) const;
+    bool expand_variables(DOM::Element&, StringView property_name, HashMap<FlyString, NonnullRefPtr<PropertyDependencyNode>>& dependencies, Parser::TokenStream<Parser::ComponentValue>& source, Vector<Parser::ComponentValue>& dest) const;
     bool expand_unresolved_values(DOM::Element&, StringView property_name, Parser::TokenStream<Parser::ComponentValue>& source, Vector<Parser::ComponentValue>& dest) const;
 
     template<typename Callback>
@@ -109,16 +109,21 @@ private:
     DOM::Document& m_document;
 
     struct RuleCache {
-        HashMap<DeprecatedFlyString, Vector<MatchingRule>> rules_by_id;
-        HashMap<DeprecatedFlyString, Vector<MatchingRule>> rules_by_class;
-        HashMap<DeprecatedFlyString, Vector<MatchingRule>> rules_by_tag_name;
-        HashMap<Selector::PseudoElement, Vector<MatchingRule>> rules_by_pseudo_element;
+        HashMap<FlyString, Vector<MatchingRule>> rules_by_id;
+        HashMap<FlyString, Vector<MatchingRule>> rules_by_class;
+        HashMap<FlyString, Vector<MatchingRule>> rules_by_tag_name;
         Vector<MatchingRule> other_rules;
     };
-    OwnPtr<RuleCache> m_rule_cache;
+
+    NonnullOwnPtr<RuleCache> make_rule_cache_for_cascade_origin(CascadeOrigin);
+
+    RuleCache const& rule_cache_for_cascade_origin(CascadeOrigin) const;
+
+    OwnPtr<RuleCache> m_author_rule_cache;
+    OwnPtr<RuleCache> m_user_agent_rule_cache;
 
     class FontLoader;
-    HashMap<DeprecatedString, NonnullOwnPtr<FontLoader>> m_loaded_fonts;
+    HashMap<String, NonnullOwnPtr<FontLoader>> m_loaded_fonts;
 };
 
 }

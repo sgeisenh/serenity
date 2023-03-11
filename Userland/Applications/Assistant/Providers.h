@@ -52,9 +52,10 @@ private:
 
 class AppResult final : public Result {
 public:
-    AppResult(RefPtr<Gfx::Bitmap> bitmap, DeprecatedString title, DeprecatedString tooltip, NonnullRefPtr<Desktop::AppFile> af, int score)
+    AppResult(RefPtr<Gfx::Bitmap const> bitmap, DeprecatedString title, DeprecatedString tooltip, NonnullRefPtr<Desktop::AppFile> af, DeprecatedString arguments, int score)
         : Result(move(title), move(tooltip), score)
         , m_app_file(move(af))
+        , m_arguments(move(arguments))
         , m_bitmap(move(bitmap))
     {
     }
@@ -65,7 +66,8 @@ public:
 
 private:
     NonnullRefPtr<Desktop::AppFile> m_app_file;
-    RefPtr<Gfx::Bitmap> m_bitmap;
+    DeprecatedString m_arguments;
+    RefPtr<Gfx::Bitmap const> m_bitmap;
 };
 
 class CalculatorResult final : public Result {
@@ -81,7 +83,7 @@ public:
     virtual Gfx::Bitmap const* bitmap() const override { return m_bitmap; }
 
 private:
-    RefPtr<Gfx::Bitmap> m_bitmap;
+    RefPtr<Gfx::Bitmap const> m_bitmap;
 };
 
 class FileResult final : public Result {
@@ -109,7 +111,7 @@ public:
     virtual Gfx::Bitmap const* bitmap() const override { return m_bitmap; }
 
 private:
-    RefPtr<Gfx::Bitmap> m_bitmap;
+    RefPtr<Gfx::Bitmap const> m_bitmap;
 };
 
 class URLResult final : public Result {
@@ -125,35 +127,35 @@ public:
     virtual Gfx::Bitmap const* bitmap() const override { return m_bitmap; }
 
 private:
-    RefPtr<Gfx::Bitmap> m_bitmap;
+    RefPtr<Gfx::Bitmap const> m_bitmap;
 };
 
 class Provider : public RefCounted<Provider> {
 public:
     virtual ~Provider() = default;
 
-    virtual void query(DeprecatedString const&, Function<void(NonnullRefPtrVector<Result>)> on_complete) = 0;
+    virtual void query(DeprecatedString const&, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete) = 0;
 };
 
 class AppProvider final : public Provider {
 public:
-    void query(DeprecatedString const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete) override;
+    void query(DeprecatedString const& query, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete) override;
 };
 
 class CalculatorProvider final : public Provider {
 public:
-    void query(DeprecatedString const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete) override;
+    void query(DeprecatedString const& query, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete) override;
 };
 
 class FileProvider final : public Provider {
 public:
     FileProvider();
 
-    void query(DeprecatedString const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete) override;
+    void query(DeprecatedString const& query, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete) override;
     void build_filesystem_cache();
 
 private:
-    RefPtr<Threading::BackgroundAction<Optional<NonnullRefPtrVector<Result>>>> m_fuzzy_match_work;
+    RefPtr<Threading::BackgroundAction<Optional<Vector<NonnullRefPtr<Result>>>>> m_fuzzy_match_work;
     bool m_building_cache { false };
     Vector<DeprecatedString> m_full_path_cache;
     Queue<DeprecatedString> m_work_queue;
@@ -161,12 +163,12 @@ private:
 
 class TerminalProvider final : public Provider {
 public:
-    void query(DeprecatedString const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete) override;
+    void query(DeprecatedString const& query, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete) override;
 };
 
 class URLProvider final : public Provider {
 public:
-    void query(DeprecatedString const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete) override;
+    void query(DeprecatedString const& query, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete) override;
 };
 
 }

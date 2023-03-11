@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/RefCounted.h>
 #include <LibJS/Heap/Handle.h>
 #include <LibWeb/DOM/MutationRecord.h>
@@ -32,7 +31,7 @@ class MutationObserver final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(MutationObserver, Bindings::PlatformObject);
 
 public:
-    static JS::NonnullGCPtr<MutationObserver> construct_impl(JS::Realm&, JS::GCPtr<WebIDL::CallbackType>);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<MutationObserver>> construct_impl(JS::Realm&, JS::GCPtr<WebIDL::CallbackType>);
     virtual ~MutationObserver() override;
 
     WebIDL::ExceptionOr<void> observe(Node& target, MutationObserverInit options = {});

@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, kleines Filmröllchen <filmroellchen@serenityos.org>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,6 +12,8 @@
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
 #include <AK/NumericLimits.h>
+#include <AK/String.h>
+#include <AK/Time.h>
 #include <AK/URL.h>
 #include <LibCore/AnonymousBuffer.h>
 #include <LibCore/DateTime.h>
@@ -39,6 +42,15 @@ template<>
 ErrorOr<void> encode(Encoder& encoder, double const& value)
 {
     return encoder.encode(bit_cast<u64>(value));
+}
+
+template<>
+ErrorOr<void> encode(Encoder& encoder, String const& value)
+{
+    auto bytes = value.bytes();
+    TRY(encoder.encode_size(bytes.size()));
+    TRY(encoder.append(bytes.data(), bytes.size()));
+    return {};
 }
 
 template<>
@@ -71,6 +83,12 @@ template<>
 ErrorOr<void> encode(Encoder& encoder, JsonValue const& value)
 {
     return encoder.encode(value.serialized<StringBuilder>());
+}
+
+template<>
+ErrorOr<void> encode(Encoder& encoder, Time const& value)
+{
+    return encoder.encode(value.to_nanoseconds());
 }
 
 template<>

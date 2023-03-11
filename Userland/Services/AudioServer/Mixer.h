@@ -12,12 +12,10 @@
 #include <AK/Atomic.h>
 #include <AK/Badge.h>
 #include <AK/ByteBuffer.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/Queue.h>
 #include <AK/RefCounted.h>
 #include <AK/WeakPtr.h>
 #include <LibAudio/Queue.h>
-#include <LibCore/File.h>
 #include <LibCore/Timer.h>
 #include <LibThreading/ConditionVariable.h>
 #include <LibThreading/Mutex.h>
@@ -129,7 +127,7 @@ private:
     Threading::Mutex m_pending_mutex;
     Threading::ConditionVariable m_mixing_necessary { m_pending_mutex };
 
-    RefPtr<Core::File> m_device;
+    RefPtr<Core::DeprecatedFile> m_device;
 
     NonnullRefPtr<Threading::Thread> m_sound_thread;
 

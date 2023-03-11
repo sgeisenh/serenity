@@ -21,22 +21,22 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<CanvasGradient>> CanvasGradient::create_rad
     if (r1 < 0)
         return WebIDL::IndexSizeError::create(realm, "The r1 passed is less than 0");
 
-    auto radial_gradient = Gfx::CanvasRadialGradientPaintStyle::create(Gfx::FloatPoint { x0, y0 }, r0, Gfx::FloatPoint { x1, y1 }, r1);
+    auto radial_gradient = TRY_OR_THROW_OOM(realm.vm(), Gfx::CanvasRadialGradientPaintStyle::create(Gfx::FloatPoint { x0, y0 }, r0, Gfx::FloatPoint { x1, y1 }, r1));
     return MUST_OR_THROW_OOM(realm.heap().allocate<CanvasGradient>(realm, realm, *radial_gradient));
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-createlineargradient
-JS::NonnullGCPtr<CanvasGradient> CanvasGradient::create_linear(JS::Realm& realm, double x0, double y0, double x1, double y1)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<CanvasGradient>> CanvasGradient::create_linear(JS::Realm& realm, double x0, double y0, double x1, double y1)
 {
-    auto linear_gradient = Gfx::CanvasLinearGradientPaintStyle::create(Gfx::FloatPoint { x0, y0 }, Gfx::FloatPoint { x1, y1 });
-    return realm.heap().allocate<CanvasGradient>(realm, realm, *linear_gradient).release_allocated_value_but_fixme_should_propagate_errors();
+    auto linear_gradient = TRY_OR_THROW_OOM(realm.vm(), Gfx::CanvasLinearGradientPaintStyle::create(Gfx::FloatPoint { x0, y0 }, Gfx::FloatPoint { x1, y1 }));
+    return MUST_OR_THROW_OOM(realm.heap().allocate<CanvasGradient>(realm, realm, *linear_gradient));
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-createconicgradient
-JS::NonnullGCPtr<CanvasGradient> CanvasGradient::create_conic(JS::Realm& realm, double start_angle, double x, double y)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<CanvasGradient>> CanvasGradient::create_conic(JS::Realm& realm, double start_angle, double x, double y)
 {
-    auto conic_gradient = Gfx::CanvasConicGradientPaintStyle::create(Gfx::FloatPoint { x, y }, start_angle);
-    return realm.heap().allocate<CanvasGradient>(realm, realm, *conic_gradient).release_allocated_value_but_fixme_should_propagate_errors();
+    auto conic_gradient = TRY_OR_THROW_OOM(realm.vm(), Gfx::CanvasConicGradientPaintStyle::create(Gfx::FloatPoint { x, y }, start_angle));
+    return MUST_OR_THROW_OOM(realm.heap().allocate<CanvasGradient>(realm, realm, *conic_gradient));
 }
 
 CanvasGradient::CanvasGradient(JS::Realm& realm, Gfx::GradientPaintStyle& gradient)
@@ -70,7 +70,7 @@ WebIDL::ExceptionOr<void> CanvasGradient::add_color_stop(double offset, Deprecat
         return WebIDL::SyntaxError::create(realm(), "Could not parse color for CanvasGradient");
 
     // 4. Place a new stop on the gradient, at offset offset relative to the whole gradient, and with the color parsed color.
-    m_gradient->add_color_stop(offset, parsed_color.value());
+    TRY_OR_THROW_OOM(realm().vm(), m_gradient->add_color_stop(offset, parsed_color.value()));
 
     // FIXME: If multiple stops are added at the same offset on a gradient, then they must be placed in the order added,
     //        with the first one closest to the start of the gradient, and each subsequent one infinitesimally further along

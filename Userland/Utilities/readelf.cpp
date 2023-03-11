@@ -9,7 +9,6 @@
 #include <AK/StringBuilder.h>
 #include <AK/StringView.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/File.h>
 #include <LibCore/MappedFile.h>
 #include <LibCore/System.h>
 #include <LibELF/DynamicLoader.h>
@@ -187,7 +186,7 @@ static char const* object_symbol_binding_to_string(ElfW(Word) type)
 static char const* object_relocation_type_to_string(ElfW(Word) type)
 {
     switch (type) {
-#if ARCH(x86_64)
+#if ARCH(X86_64)
     case R_X86_64_NONE:
         return "R_X86_64_NONE";
     case R_X86_64_64:
@@ -243,7 +242,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.parse(arguments);
 
     if (arguments.argc < 3) {
-        args_parser.print_usage(stderr, arguments.argv[0]);
+        args_parser.print_usage(stderr, arguments.strings[0]);
         return Error::from_errno(EINVAL);
     }
 

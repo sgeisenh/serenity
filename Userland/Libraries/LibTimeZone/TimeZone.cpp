@@ -141,7 +141,7 @@ ErrorOr<void> change_time_zone([[maybe_unused]] StringView time_zone)
 #endif
 }
 
-Span<StringView const> __attribute__((weak)) all_time_zones()
+ReadonlySpan<StringView> __attribute__((weak)) all_time_zones()
 {
 #if !ENABLE_TIME_ZONE_DATA
     static constexpr auto utc = Array { "UTC"sv };
@@ -154,7 +154,7 @@ Span<StringView const> __attribute__((weak)) all_time_zones()
 Optional<TimeZone> __attribute__((weak)) time_zone_from_string([[maybe_unused]] StringView time_zone)
 {
 #if !ENABLE_TIME_ZONE_DATA
-    if (time_zone.equals_ignoring_case("UTC"sv))
+    if (time_zone.equals_ignoring_ascii_case("UTC"sv))
         return TimeZone::UTC;
 #endif
     return {};

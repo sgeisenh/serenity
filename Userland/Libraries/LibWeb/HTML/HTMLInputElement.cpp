@@ -35,7 +35,7 @@ HTMLInputElement::HTMLInputElement(DOM::Document& document, DOM::QualifiedName q
         // FIXME: 1. If this element is not mutable and is not in the Checkbox state and is not in the Radio state, then return.
 
         // 2. Run this element's input activation behavior, if any, and do nothing otherwise.
-        run_input_activation_behavior();
+        run_input_activation_behavior().release_value_but_fixme_should_propagate_errors();
     };
 }
 
@@ -110,7 +110,7 @@ JS::GCPtr<FileAPI::FileList> HTMLInputElement::files()
         return nullptr;
 
     if (!m_selected_files)
-        m_selected_files = FileAPI::FileList::create(realm(), {});
+        m_selected_files = FileAPI::FileList::create(realm(), {}).release_value_but_fixme_should_propagate_errors();
     return m_selected_files;
 }
 
@@ -134,12 +134,12 @@ void HTMLInputElement::update_the_file_selection(JS::NonnullGCPtr<FileAPI::FileL
         this->set_files(files.ptr());
 
         // 2. Fire an event named input at the input element, with the bubbles and composed attributes initialized to true.
-        auto input_event = DOM::Event::create(this->realm(), EventNames::input, { .bubbles = true, .composed = true });
-        this->dispatch_event(*input_event);
+        auto input_event = DOM::Event::create(this->realm(), EventNames::input, { .bubbles = true, .composed = true }).release_value_but_fixme_should_propagate_errors();
+        this->dispatch_event(input_event);
 
         // 3. Fire an event named change at the input element, with the bubbles attribute initialized to true.
-        auto change_event = DOM::Event::create(this->realm(), EventNames::change, { .bubbles = true });
-        this->dispatch_event(*change_event);
+        auto change_event = DOM::Event::create(this->realm(), EventNames::change, { .bubbles = true }).release_value_but_fixme_should_propagate_errors();
+        this->dispatch_event(change_event);
     });
 }
 
@@ -217,40 +217,42 @@ WebIDL::ExceptionOr<void> HTMLInputElement::show_picker()
 }
 
 // https://html.spec.whatwg.org/multipage/input.html#input-activation-behavior
-void HTMLInputElement::run_input_activation_behavior()
+ErrorOr<void> HTMLInputElement::run_input_activation_behavior()
 {
     if (type_state() == TypeAttributeState::Checkbox || type_state() == TypeAttributeState::RadioButton) {
         // 1. If the element is not connected, then return.
         if (!is_connected())
-            return;
+            return {};
 
         // 2. Fire an event named input at the element with the bubbles and composed attributes initialized to true.
-        auto input_event = DOM::Event::create(realm(), HTML::EventNames::input);
+        auto input_event = DOM::Event::create(realm(), HTML::EventNames::input).release_value_but_fixme_should_propagate_errors();
         input_event->set_bubbles(true);
         input_event->set_composed(true);
-        dispatch_event(*input_event);
+        dispatch_event(input_event);
 
         // 3. Fire an event named change at the element with the bubbles attribute initialized to true.
-        auto change_event = DOM::Event::create(realm(), HTML::EventNames::change);
+        auto change_event = DOM::Event::create(realm(), HTML::EventNames::change).release_value_but_fixme_should_propagate_errors();
         change_event->set_bubbles(true);
         dispatch_event(*change_event);
     } else if (type_state() == TypeAttributeState::SubmitButton) {
         JS::GCPtr<HTMLFormElement> form;
         // 1. If the element does not have a form owner, then return.
         if (!(form = this->form()))
-            return;
+            return {};
 
         // 2. If the element's node document is not fully active, then return.
         if (!document().is_fully_active())
-            return;
+            return {};
 
         // 3. Submit the form owner from the element.
-        form->submit_form(this);
+        TRY(form->submit_form(this));
     } else if (type_state() == TypeAttributeState::FileUpload) {
         show_the_picker_if_applicable(*this);
     } else {
-        dispatch_event(*DOM::Event::create(realm(), EventNames::change));
+        dispatch_event(DOM::Event::create(realm(), EventNames::change).release_value_but_fixme_should_propagate_errors());
     }
+
+    return {};
 }
 
 void HTMLInputElement::did_edit_text_node(Badge<BrowsingContext>)
@@ -262,15 +264,15 @@ void HTMLInputElement::did_edit_text_node(Badge<BrowsingContext>)
     // NOTE: This is a bit ad-hoc, but basically implements part of "4.10.5.5 Common event behaviors"
     //       https://html.spec.whatwg.org/multipage/input.html#common-input-element-events
     queue_an_element_task(HTML::Task::Source::UserInteraction, [this] {
-        auto input_event = DOM::Event::create(realm(), HTML::EventNames::input);
+        auto input_event = DOM::Event::create(realm(), HTML::EventNames::input).release_value_but_fixme_should_propagate_errors();
         input_event->set_bubbles(true);
         input_event->set_composed(true);
         dispatch_event(*input_event);
 
         // FIXME: This should only fire when the input is "committed", whatever that means.
-        auto change_event = DOM::Event::create(realm(), HTML::EventNames::change);
+        auto change_event = DOM::Event::create(realm(), HTML::EventNames::change).release_value_but_fixme_should_propagate_errors();
         change_event->set_bubbles(true);
-        dispatch_event(*change_event);
+        dispatch_event(change_event);
     });
 }
 
@@ -366,7 +368,7 @@ Optional<DeprecatedString> HTMLInputElement::placeholder_value() const
 
 void HTMLInputElement::create_shadow_tree_if_needed()
 {
-    if (shadow_root())
+    if (shadow_root_internal())
         return;
 
     // FIXME: This could be better factored. Everything except the below types becomes a text input.
@@ -429,7 +431,7 @@ void HTMLInputElement::parse_attribute(DeprecatedFlyString const& name, Deprecat
 HTMLInputElement::TypeAttributeState HTMLInputElement::parse_type_attribute(StringView type)
 {
 #define __ENUMERATE_HTML_INPUT_TYPE_ATTRIBUTE(keyword, state) \
-    if (type.equals_ignoring_case(#keyword##sv))              \
+    if (type.equals_ignoring_ascii_case(#keyword##sv))        \
         return HTMLInputElement::TypeAttributeState::state;
     ENUMERATE_HTML_INPUT_TYPE_ATTRIBUTES
 #undef __ENUMERATE_HTML_INPUT_TYPE_ATTRIBUTE
@@ -756,7 +758,7 @@ void HTMLInputElement::reset_algorithm()
     m_checked = has_attribute(AttributeNames::checked);
 
     // empty the list of selected files,
-    m_selected_files = FileAPI::FileList::create(realm(), {});
+    m_selected_files = FileAPI::FileList::create(realm(), {}).release_value_but_fixme_should_propagate_errors();
 
     // and then invoke the value sanitization algorithm, if the type attribute's current state defines one.
     m_value = value_sanitization_algorithm(m_value);

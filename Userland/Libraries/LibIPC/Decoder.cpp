@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,6 +11,7 @@
 #include <LibCore/AnonymousBuffer.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/Proxy.h>
+#include <LibCore/Socket.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Dictionary.h>
 #include <LibIPC/File.h>
@@ -20,6 +22,13 @@ namespace IPC {
 ErrorOr<size_t> Decoder::decode_size()
 {
     return static_cast<size_t>(TRY(decode<u32>()));
+}
+
+template<>
+ErrorOr<String> decode(Decoder& decoder)
+{
+    auto length = TRY(decoder.decode_size());
+    return String::from_stream(decoder.stream(), length);
 }
 
 template<>
@@ -59,6 +68,13 @@ ErrorOr<JsonValue> decode(Decoder& decoder)
 {
     auto json = TRY(decoder.decode<DeprecatedString>());
     return JsonValue::from_string(json);
+}
+
+template<>
+ErrorOr<Time> decode(Decoder& decoder)
+{
+    auto nanoseconds = TRY(decoder.decode<i64>());
+    return AK::Time::from_nanoseconds(nanoseconds);
 }
 
 template<>

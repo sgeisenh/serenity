@@ -106,7 +106,7 @@ UNMAP_AFTER_INIT ErrorOr<void> PCIIDELegacyModeController::initialize_and_enumer
         primary_base_io_window = TRY(IOWindow::create_for_io_space(IOAddress(0x1F0), 8));
         primary_control_io_window = TRY(IOWindow::create_for_io_space(IOAddress(0x3F6), 4));
     } else {
-        auto primary_base_io_window = TRY(IOWindow::create_for_pci_device_bar(device_identifier(), PCI::HeaderType0BaseRegister::BAR0));
+        primary_base_io_window = TRY(IOWindow::create_for_pci_device_bar(device_identifier(), PCI::HeaderType0BaseRegister::BAR0));
         auto pci_primary_control_io_window = TRY(IOWindow::create_for_pci_device_bar(device_identifier(), PCI::HeaderType0BaseRegister::BAR1));
         // Note: the PCI IDE specification says we should access the IO address with an offset of 2
         // on native PCI IDE controllers.
@@ -152,7 +152,7 @@ UNMAP_AFTER_INIT ErrorOr<void> PCIIDELegacyModeController::initialize_and_enumer
         TRY(m_channels.try_append(IDEChannel::create(*this, move(primary_channel_io_window_group), IDEChannel::ChannelType::Primary)));
     }
     TRY(initialize_and_enumerate(m_channels[0]));
-    m_channels[0].enable_irq();
+    m_channels[0]->enable_irq();
 
     if (is_pci_native_mode_enabled_on_secondary_channel()) {
         TRY(m_channels.try_append(IDEChannel::create(*this, irq_line, move(secondary_channel_io_window_group), IDEChannel::ChannelType::Secondary)));
@@ -160,7 +160,7 @@ UNMAP_AFTER_INIT ErrorOr<void> PCIIDELegacyModeController::initialize_and_enumer
         TRY(m_channels.try_append(IDEChannel::create(*this, move(secondary_channel_io_window_group), IDEChannel::ChannelType::Secondary)));
     }
     TRY(initialize_and_enumerate(m_channels[1]));
-    m_channels[1].enable_irq();
+    m_channels[1]->enable_irq();
     return {};
 }
 

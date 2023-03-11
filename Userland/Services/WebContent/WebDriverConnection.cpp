@@ -3,13 +3,14 @@
  * Copyright (c) 2022-2023, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2022, Tobias Christiansen <tobyase@serenityos.org>
  * Copyright (c) 2022, Linus Groh <linusg@serenityos.org>
- * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2022-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
+#include <AK/Time.h>
 #include <AK/Vector.h>
 #include <LibJS/Runtime/JSONObject.h>
 #include <LibJS/Runtime/Value.h>
@@ -54,7 +55,7 @@ static JsonValue serialize_cookie(Web::Cookie::Cookie const& cookie)
     serialized_cookie.set("domain"sv, cookie.domain);
     serialized_cookie.set("secure"sv, cookie.secure);
     serialized_cookie.set("httpOnly"sv, cookie.http_only);
-    serialized_cookie.set("expiry"sv, cookie.expiry_time.timestamp());
+    serialized_cookie.set("expiry"sv, cookie.expiry_time.to_seconds());
     serialized_cookie.set("sameSite"sv, Web::Cookie::same_site_to_string(cookie.same_site));
 
     return serialized_cookie;
@@ -314,25 +315,23 @@ static bool fire_an_event(DeprecatedString name, Optional<Web::DOM::Element&> ta
     if (!target.has_value())
         return false;
 
-    auto event = T::create(target->realm(), name);
-    return target->dispatch_event(*event);
+    auto event = T::create(target->realm(), name).release_value_but_fixme_should_propagate_errors();
+    return target->dispatch_event(event);
 }
 
 ErrorOr<NonnullRefPtr<WebDriverConnection>> WebDriverConnection::connect(Web::PageClient& page_client, DeprecatedString const& webdriver_ipc_path)
 {
     dbgln_if(WEBDRIVER_DEBUG, "Trying to connect to {}", webdriver_ipc_path);
-    auto socket = TRY(Core::Stream::LocalSocket::connect(webdriver_ipc_path));
+    auto socket = TRY(Core::LocalSocket::connect(webdriver_ipc_path));
 
     dbgln_if(WEBDRIVER_DEBUG, "Connected to WebDriver");
     return adopt_nonnull_ref_or_enomem(new (nothrow) WebDriverConnection(move(socket), page_client));
 }
 
-WebDriverConnection::WebDriverConnection(NonnullOwnPtr<Core::Stream::LocalSocket> socket, Web::PageClient& page_client)
+WebDriverConnection::WebDriverConnection(NonnullOwnPtr<Core::LocalSocket> socket, Web::PageClient& page_client)
     : IPC::ConnectionToServer<WebDriverClientEndpoint, WebDriverServerEndpoint>(*this, move(socket))
     , m_page_client(page_client)
-    , m_current_window_handle("main"sv)
 {
-    m_windows.set(m_current_window_handle, { m_current_window_handle, true });
 }
 
 // https://w3c.github.io/webdriver/#dfn-close-the-session
@@ -407,16 +406,22 @@ Messages::WebDriverClient::NavigateToResponse WebDriverConnection::navigate_to(J
     // 4. Handle any user prompts and return its value if it is an error.
     TRY(handle_any_user_prompts());
 
-    // FIXME: 5. Let current URL be the current top-level browsing context’s active document’s URL.
+    // 5. Let current URL be the current top-level browsing context’s active document’s URL.
+    auto const& current_url = m_page_client.page().top_level_browsing_context().active_document()->url();
     // FIXME: 6. If current URL and url do not have the same absolute URL:
     // FIXME:     a. If timer has not been started, start a timer. If this algorithm has not completed before timer reaches the session’s session page load timeout in milliseconds, return an error with error code timeout.
 
     // 7. Navigate the current top-level browsing context to url.
     m_page_client.page().load(url);
 
-    // FIXME: 8. If url is special except for file and current URL and URL do not have the same absolute URL:
-    // FIXME:     a. Try to wait for navigation to complete.
-    // FIXME:     b. Try to run the post-navigation checks.
+    // 8. If url is special except for file and current URL and URL do not have the same absolute URL:
+    if (url.is_special() && url.scheme() != "file"sv && current_url != url) {
+        // a. Try to wait for navigation to complete.
+        TRY(wait_for_navigation_to_complete());
+
+        // FIXME: b. Try to run the post-navigation checks.
+    }
+
     // FIXME: 9. Set the current browsing context with the current top-level browsing context.
     // FIXME: 10. If the current top-level browsing context contains a refresh state pragma directive of time 1 second or less, wait until the refresh timeout has elapsed, a new navigate has begun, and return to the first step of this algorithm.
 
@@ -517,16 +522,6 @@ Messages::WebDriverClient::GetTitleResponse WebDriverConnection::get_title()
     return title;
 }
 
-// 11.1 Get Window Handle, https://w3c.github.io/webdriver/#get-window-handle
-Messages::WebDriverClient::GetWindowHandleResponse WebDriverConnection::get_window_handle()
-{
-    // 1. If the current top-level browsing context is no longer open, return error with error code no such window.
-    TRY(ensure_open_top_level_browsing_context());
-
-    // 2. Return success with data being the window handle associated with the current top-level browsing context.
-    return m_current_window_handle;
-}
-
 // 11.2 Close Window, https://w3c.github.io/webdriver/#dfn-close-window
 Messages::WebDriverClient::CloseWindowResponse WebDriverConnection::close_window()
 {
@@ -538,58 +533,7 @@ Messages::WebDriverClient::CloseWindowResponse WebDriverConnection::close_window
 
     // 3. Close the current top-level browsing context.
     m_page_client.page().top_level_browsing_context().close();
-    m_windows.remove(m_current_window_handle);
-
-    // 4. If there are no more open top-level browsing contexts, then close the session.
-    if (m_windows.is_empty())
-        close_session();
-
-    // 5. Return the result of running the remote end steps for the Get Window Handles command.
-    return get_window_handles().take_response();
-}
-
-// 11.3 Switch to Window, https://w3c.github.io/webdriver/#dfn-switch-to-window
-Messages::WebDriverClient::SwitchToWindowResponse WebDriverConnection::switch_to_window(JsonValue const& payload)
-{
-    // 1. Let handle be the result of getting the property "handle" from the parameters argument.
-    // 2. If handle is undefined, return error with error code invalid argument.
-    auto handle = TRY(get_property(payload, "handle"sv));
-
-    // 3. If there is an active user prompt, that prevents the focusing of another top-level browsing
-    //    context, return error with error code unexpected alert open.
-    if (m_page_client.page().has_pending_dialog())
-        return Web::WebDriver::Error::from_code(Web::WebDriver::ErrorCode::UnexpectedAlertOpen, "A user dialog is open"sv);
-
-    // 4. If handle is equal to the associated window handle for some top-level browsing context in the
-    //    current session, let context be the that browsing context, and set the current top-level
-    //    browsing context with context.
-    //    Otherwise, return error with error code no such window.
-    auto const& maybe_window = m_windows.get(handle);
-
-    if (!maybe_window.has_value())
-        return Web::WebDriver::Error::from_code(Web::WebDriver::ErrorCode::NoSuchWindow, "Window not found");
-
-    m_current_window_handle = handle;
-
-    // FIXME: 5. Update any implementation-specific state that would result from the user selecting the current
-    //          browsing context for interaction, without altering OS-level focus.
-
-    // 6. Return success with data null.
     return JsonValue {};
-}
-
-// 11.4 Get Window Handles, https://w3c.github.io/webdriver/#dfn-get-window-handles
-Messages::WebDriverClient::GetWindowHandlesResponse WebDriverConnection::get_window_handles()
-{
-    // 1. Let handles be a JSON List.
-    JsonArray handles {};
-
-    // 2. For each top-level browsing context in the remote end, push the associated window handle onto handles.
-    for (auto const& window_handle : m_windows.keys())
-        handles.append(window_handle);
-
-    // 3. Return success with data handles.
-    return handles;
 }
 
 // 11.8.1 Get Window Rect, https://w3c.github.io/webdriver/#dfn-get-window-rect
@@ -832,7 +776,7 @@ Messages::WebDriverClient::FindElementsResponse WebDriverConnection::find_elemen
 }
 
 // 12.3.4 Find Element From Element, https://w3c.github.io/webdriver/#dfn-find-element-from-element
-Messages::WebDriverClient::FindElementFromElementResponse WebDriverConnection::find_element_from_element(JsonValue const& payload, DeprecatedString const& element_id)
+Messages::WebDriverClient::FindElementFromElementResponse WebDriverConnection::find_element_from_element(JsonValue const& payload, String const& element_id)
 {
     // 1. Let location strategy be the result of getting a property called "using".
     auto location_strategy_string = TRY(get_property(payload, "using"sv));
@@ -868,7 +812,7 @@ Messages::WebDriverClient::FindElementFromElementResponse WebDriverConnection::f
 }
 
 // 12.3.5 Find Elements From Element, https://w3c.github.io/webdriver/#dfn-find-elements-from-element
-Messages::WebDriverClient::FindElementsFromElementResponse WebDriverConnection::find_elements_from_element(JsonValue const& payload, DeprecatedString const& element_id)
+Messages::WebDriverClient::FindElementsFromElementResponse WebDriverConnection::find_elements_from_element(JsonValue const& payload, String const& element_id)
 {
     // 1. Let location strategy be the result of getting a property called "using".
     auto location_strategy_string = TRY(get_property(payload, "using"sv));
@@ -898,7 +842,7 @@ Messages::WebDriverClient::FindElementsFromElementResponse WebDriverConnection::
 }
 
 // 12.3.6 Find Element From Shadow Root, https://w3c.github.io/webdriver/#find-element-from-shadow-root
-Messages::WebDriverClient::FindElementFromShadowRootResponse WebDriverConnection::find_element_from_shadow_root(JsonValue const& payload, DeprecatedString const& shadow_id)
+Messages::WebDriverClient::FindElementFromShadowRootResponse WebDriverConnection::find_element_from_shadow_root(JsonValue const& payload, String const& shadow_id)
 {
     // 1. Let location strategy be the result of getting a property called "using".
     auto location_strategy_string = TRY(get_property(payload, "using"sv));
@@ -934,7 +878,7 @@ Messages::WebDriverClient::FindElementFromShadowRootResponse WebDriverConnection
 }
 
 // 12.3.7 Find Elements From Shadow Root, https://w3c.github.io/webdriver/#find-elements-from-shadow-root
-Messages::WebDriverClient::FindElementsFromShadowRootResponse WebDriverConnection::find_elements_from_shadow_root(JsonValue const& payload, DeprecatedString const& shadow_id)
+Messages::WebDriverClient::FindElementsFromShadowRootResponse WebDriverConnection::find_elements_from_shadow_root(JsonValue const& payload, String const& shadow_id)
 {
     // 1. Let location strategy be the result of getting a property called "using".
     auto location_strategy_string = TRY(get_property(payload, "using"sv));
@@ -984,7 +928,7 @@ Messages::WebDriverClient::GetActiveElementResponse WebDriverConnection::get_act
 }
 
 // 12.3.9 Get Element Shadow Root, https://w3c.github.io/webdriver/#get-element-shadow-root
-Messages::WebDriverClient::GetElementShadowRootResponse WebDriverConnection::get_element_shadow_root(DeprecatedString const& element_id)
+Messages::WebDriverClient::GetElementShadowRootResponse WebDriverConnection::get_element_shadow_root(String const& element_id)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1010,7 +954,7 @@ Messages::WebDriverClient::GetElementShadowRootResponse WebDriverConnection::get
 }
 
 // 12.4.1 Is Element Selected, https://w3c.github.io/webdriver/#dfn-is-element-selected
-Messages::WebDriverClient::IsElementSelectedResponse WebDriverConnection::is_element_selected(DeprecatedString const& element_id)
+Messages::WebDriverClient::IsElementSelectedResponse WebDriverConnection::is_element_selected(String const& element_id)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1046,7 +990,7 @@ Messages::WebDriverClient::IsElementSelectedResponse WebDriverConnection::is_ele
 }
 
 // 12.4.2 Get Element Attribute, https://w3c.github.io/webdriver/#dfn-get-element-attribute
-Messages::WebDriverClient::GetElementAttributeResponse WebDriverConnection::get_element_attribute(DeprecatedString const& element_id, DeprecatedString const& name)
+Messages::WebDriverClient::GetElementAttributeResponse WebDriverConnection::get_element_attribute(String const& element_id, String const& name)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1060,16 +1004,18 @@ Messages::WebDriverClient::GetElementAttributeResponse WebDriverConnection::get_
     // 4. Let result be the result of the first matching condition:
     Optional<DeprecatedString> result;
 
+    auto deprecated_name = name.to_deprecated_string();
+
     // -> If name is a boolean attribute
-    if (Web::HTML::is_boolean_attribute(name)) {
+    if (Web::HTML::is_boolean_attribute(deprecated_name)) {
         // "true" (string) if the element has the attribute, otherwise null.
-        if (element->has_attribute(name))
+        if (element->has_attribute(deprecated_name))
             result = "true"sv;
     }
     // -> Otherwise
     else {
         // The result of getting an attribute by name name.
-        result = element->get_attribute(name);
+        result = element->get_attribute(deprecated_name);
     }
 
     // 5. Return success with data result.
@@ -1079,7 +1025,7 @@ Messages::WebDriverClient::GetElementAttributeResponse WebDriverConnection::get_
 }
 
 // 12.4.3 Get Element Property, https://w3c.github.io/webdriver/#dfn-get-element-property
-Messages::WebDriverClient::GetElementPropertyResponse WebDriverConnection::get_element_property(DeprecatedString const& element_id, DeprecatedString const& name)
+Messages::WebDriverClient::GetElementPropertyResponse WebDriverConnection::get_element_property(String const& element_id, String const& name)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1093,7 +1039,7 @@ Messages::WebDriverClient::GetElementPropertyResponse WebDriverConnection::get_e
     Optional<DeprecatedString> result;
 
     // 4. Let property be the result of calling the Object.[[GetProperty]](name) on element.
-    if (auto property_or_error = element->get(name); !property_or_error.is_throw_completion()) {
+    if (auto property_or_error = element->get(name.to_deprecated_string()); !property_or_error.is_throw_completion()) {
         auto property = property_or_error.release_value();
 
         // 5. Let result be the value of property if not undefined, or null.
@@ -1110,7 +1056,7 @@ Messages::WebDriverClient::GetElementPropertyResponse WebDriverConnection::get_e
 }
 
 // 12.4.4 Get Element CSS Value, https://w3c.github.io/webdriver/#dfn-get-element-css-value
-Messages::WebDriverClient::GetElementCssValueResponse WebDriverConnection::get_element_css_value(DeprecatedString const& element_id, DeprecatedString const& name)
+Messages::WebDriverClient::GetElementCssValueResponse WebDriverConnection::get_element_css_value(String const& element_id, String const& name)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1143,7 +1089,7 @@ Messages::WebDriverClient::GetElementCssValueResponse WebDriverConnection::get_e
 }
 
 // 12.4.5 Get Element Text, https://w3c.github.io/webdriver/#dfn-get-element-text
-Messages::WebDriverClient::GetElementTextResponse WebDriverConnection::get_element_text(DeprecatedString const& element_id)
+Messages::WebDriverClient::GetElementTextResponse WebDriverConnection::get_element_text(String const& element_id)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1162,7 +1108,7 @@ Messages::WebDriverClient::GetElementTextResponse WebDriverConnection::get_eleme
 }
 
 // 12.4.6 Get Element Tag Name, https://w3c.github.io/webdriver/#dfn-get-element-tag-name
-Messages::WebDriverClient::GetElementTagNameResponse WebDriverConnection::get_element_tag_name(DeprecatedString const& element_id)
+Messages::WebDriverClient::GetElementTagNameResponse WebDriverConnection::get_element_tag_name(String const& element_id)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1181,7 +1127,7 @@ Messages::WebDriverClient::GetElementTagNameResponse WebDriverConnection::get_el
 }
 
 // 12.4.7 Get Element Rect, https://w3c.github.io/webdriver/#dfn-get-element-rect
-Messages::WebDriverClient::GetElementRectResponse WebDriverConnection::get_element_rect(DeprecatedString const& element_id)
+Messages::WebDriverClient::GetElementRectResponse WebDriverConnection::get_element_rect(String const& element_id)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1212,7 +1158,7 @@ Messages::WebDriverClient::GetElementRectResponse WebDriverConnection::get_eleme
 }
 
 // 12.4.8 Is Element Enabled, https://w3c.github.io/webdriver/#dfn-is-element-enabled
-Messages::WebDriverClient::IsElementEnabledResponse WebDriverConnection::is_element_enabled(DeprecatedString const& element_id)
+Messages::WebDriverClient::IsElementEnabledResponse WebDriverConnection::is_element_enabled(String const& element_id)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1238,7 +1184,7 @@ Messages::WebDriverClient::IsElementEnabledResponse WebDriverConnection::is_elem
 }
 
 // 12.4.9 Get Computed Role, https://w3c.github.io/webdriver/#dfn-get-computed-role
-Messages::WebDriverClient::GetComputedRoleResponse WebDriverConnection::get_computed_role(DeprecatedString const& element_id)
+Messages::WebDriverClient::GetComputedRoleResponse WebDriverConnection::get_computed_role(String const& element_id)
 {
     // 1. If the current top-level browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1258,8 +1204,27 @@ Messages::WebDriverClient::GetComputedRoleResponse WebDriverConnection::get_comp
     return ""sv;
 }
 
+// 12.4.10 Get Computed Label, https://w3c.github.io/webdriver/#get-computed-label
+Messages::WebDriverClient::GetComputedLabelResponse WebDriverConnection::get_computed_label(String const& element_id)
+{
+    // 1. If the current browsing context is no longer open, return error with error code no such window.
+    TRY(ensure_open_top_level_browsing_context());
+
+    // 2. Handle any user prompts and return its value if it is an error.
+    TRY(handle_any_user_prompts());
+
+    // 3. Let element be the result of trying to get a known element with url variable element id.
+    auto* element = TRY(get_known_connected_element(element_id));
+
+    // 4. Let label be the result of a Accessible Name and Description Computation for the Accessible Name of the element.
+    auto label = element->accessible_name(element->document()).release_value_but_fixme_should_propagate_errors();
+
+    // 5. Return success with data label.
+    return label.to_deprecated_string();
+}
+
 // 12.5.1 Element Click, https://w3c.github.io/webdriver/#element-click
-Messages::WebDriverClient::ElementClickResponse WebDriverConnection::element_click(DeprecatedString const& element_id)
+Messages::WebDriverClient::ElementClickResponse WebDriverConnection::element_click(String const& element_id)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1501,7 +1466,7 @@ Messages::WebDriverClient::GetAllCookiesResponse WebDriverConnection::get_all_co
 }
 
 // 14.2 Get Named Cookie, https://w3c.github.io/webdriver/#dfn-get-named-cookie
-Messages::WebDriverClient::GetNamedCookieResponse WebDriverConnection::get_named_cookie(DeprecatedString const& name)
+Messages::WebDriverClient::GetNamedCookieResponse WebDriverConnection::get_named_cookie(String const& name)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1512,7 +1477,7 @@ Messages::WebDriverClient::GetNamedCookieResponse WebDriverConnection::get_named
     // 3. If the url variable name is equal to a cookie’s cookie name amongst all associated cookies of the current browsing context’s active document, return success with the serialized cookie as data.
     auto* document = m_page_client.page().top_level_browsing_context().active_document();
 
-    if (auto cookie = m_page_client.page_did_request_named_cookie(document->url(), name); cookie.has_value()) {
+    if (auto cookie = m_page_client.page_did_request_named_cookie(document->url(), name.to_deprecated_string()); cookie.has_value()) {
         auto serialized_cookie = serialize_cookie(*cookie);
         return serialized_cookie;
     }
@@ -1574,7 +1539,7 @@ Messages::WebDriverClient::AddCookieResponse WebDriverConnection::add_cookie(Jso
     if (data.has("expiry"sv)) {
         // NOTE: less than 0 or greater than safe integer are handled by the JSON parser
         auto expiry = TRY(get_property<u32>(data, "expiry"sv));
-        cookie.expiry_time_from_expires_attribute = Core::DateTime::from_timestamp(expiry);
+        cookie.expiry_time_from_expires_attribute = Time::from_seconds(expiry);
     }
 
     // Cookie same site
@@ -1595,7 +1560,7 @@ Messages::WebDriverClient::AddCookieResponse WebDriverConnection::add_cookie(Jso
 }
 
 // 14.4 Delete Cookie, https://w3c.github.io/webdriver/#dfn-delete-cookie
-Messages::WebDriverClient::DeleteCookieResponse WebDriverConnection::delete_cookie(DeprecatedString const& name)
+Messages::WebDriverClient::DeleteCookieResponse WebDriverConnection::delete_cookie(String const& name)
 {
     // 1. If the current browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1746,7 +1711,7 @@ Messages::WebDriverClient::TakeScreenshotResponse WebDriverConnection::take_scre
 }
 
 // 17.2 Take Element Screenshot, https://w3c.github.io/webdriver/#dfn-take-element-screenshot
-Messages::WebDriverClient::TakeElementScreenshotResponse WebDriverConnection::take_element_screenshot(DeprecatedString const& element_id)
+Messages::WebDriverClient::TakeElementScreenshotResponse WebDriverConnection::take_element_screenshot(String const& element_id)
 {
     // 1. If the current top-level browsing context is no longer open, return error with error code no such window.
     TRY(ensure_open_top_level_browsing_context());
@@ -1786,11 +1751,18 @@ Messages::WebDriverClient::PrintPageResponse WebDriverConnection::print_page()
 }
 
 // https://w3c.github.io/webdriver/#dfn-no-longer-open
-ErrorOr<void, Web::WebDriver::Error> WebDriverConnection::ensure_open_top_level_browsing_context()
+Messages::WebDriverClient::EnsureTopLevelBrowsingContextIsOpenResponse WebDriverConnection::ensure_top_level_browsing_context_is_open()
 {
     // A browsing context is said to be no longer open if it has been discarded.
     if (m_page_client.page().top_level_browsing_context().has_been_discarded())
         return Web::WebDriver::Error::from_code(Web::WebDriver::ErrorCode::NoSuchWindow, "Window not found"sv);
+    return JsonValue {};
+}
+
+// https://w3c.github.io/webdriver/#dfn-no-longer-open
+ErrorOr<void, Web::WebDriver::Error> WebDriverConnection::ensure_open_top_level_browsing_context()
+{
+    TRY(ensure_top_level_browsing_context_is_open().take_response());
     return {};
 }
 
@@ -1838,6 +1810,44 @@ ErrorOr<void, Web::WebDriver::Error> WebDriverConnection::handle_any_user_prompt
     }
 
     // 3. Return success.
+    return {};
+}
+
+// https://w3c.github.io/webdriver/#dfn-waiting-for-the-navigation-to-complete
+ErrorOr<void, Web::WebDriver::Error> WebDriverConnection::wait_for_navigation_to_complete()
+{
+    // 1. If the current session has a page loading strategy of none, return success with data null.
+    if (m_page_load_strategy == Web::WebDriver::PageLoadStrategy::None)
+        return {};
+
+    // 2. If the current browsing context is no longer open, return success with data null.
+    if (m_page_client.page().top_level_browsing_context().has_been_discarded())
+        return {};
+
+    // FIXME: 3. Start a timer. If this algorithm has not completed before timer reaches the session’s session page load timeout in milliseconds, return an error with error code timeout.
+    // FIXME: 4. If there is an ongoing attempt to navigate the current browsing context that has not yet matured, wait for navigation to mature.
+
+    // 5. Let readiness target be the document readiness state associated with the current session’s page loading strategy, which can be found in the table of page load strategies.
+    auto readiness_target = [this]() {
+        switch (m_page_load_strategy) {
+        case Web::WebDriver::PageLoadStrategy::Normal:
+            return Web::HTML::DocumentReadyState::Complete;
+        case Web::WebDriver::PageLoadStrategy::Eager:
+            return Web::HTML::DocumentReadyState::Interactive;
+        default:
+            VERIFY_NOT_REACHED();
+        };
+    }();
+
+    // 6. Wait for the current browsing context’s document readiness state to reach readiness target,
+    // FIXME: or for the session page load timeout to pass, whichever occurs sooner.
+    Web::Platform::EventLoopPlugin::the().spin_until([&]() {
+        return m_page_client.page().top_level_browsing_context().active_document()->readiness() == readiness_target;
+    });
+
+    // FIXME: 7. If the previous step completed by the session page load timeout being reached and the browser does not have an active user prompt, return error with error code timeout.
+
+    // 8. Return success with data null.
     return {};
 }
 
@@ -1966,7 +1976,7 @@ void WebDriverConnection::delete_cookies(Optional<StringView> const& name)
         // -> name is equal to cookie name
         if (!name.has_value() || name.value() == cookie.name) {
             // Set the cookie expiry time to a Unix timestamp in the past.
-            cookie.expiry_time = Core::DateTime::from_timestamp(0);
+            cookie.expiry_time = Time::from_seconds(0);
             m_page_client.page_did_update_cookie(move(cookie));
         }
         // -> Otherwise

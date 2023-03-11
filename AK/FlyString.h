@@ -21,7 +21,8 @@ public:
     ~FlyString();
 
     static ErrorOr<FlyString> from_utf8(StringView);
-    explicit FlyString(String const&);
+    FlyString(String const&);
+    FlyString& operator=(String const&);
 
     FlyString(FlyString const&);
     FlyString& operator=(FlyString const&);
@@ -50,6 +51,13 @@ public:
     // This is primarily interesting to unit tests.
     [[nodiscard]] static size_t number_of_fly_strings();
 
+    // FIXME: Remove these once all code has been ported to FlyString
+    [[nodiscard]] DeprecatedFlyString to_deprecated_fly_string() const;
+    static ErrorOr<FlyString> from_deprecated_fly_string(DeprecatedFlyString const&);
+
+    // Compare this FlyString against another string with ASCII caseless matching.
+    [[nodiscard]] bool equals_ignoring_ascii_case(FlyString const&) const;
+
 private:
     // This will hold either the pointer to the Detail::StringData it represents or the raw bytes of
     // an inlined short string.
@@ -66,6 +74,11 @@ struct Formatter<FlyString> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder&, FlyString const&);
 };
 
+}
+
+[[nodiscard]] ALWAYS_INLINE AK::ErrorOr<AK::FlyString> operator""_fly_string(char const* cstring, size_t length)
+{
+    return AK::FlyString::from_utf8(AK::StringView(cstring, length));
 }
 
 #if USING_AK_GLOBALLY

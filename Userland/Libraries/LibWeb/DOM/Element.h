@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,6 +11,7 @@
 #include <LibWeb/ARIA/ARIAMixin.h>
 #include <LibWeb/Bindings/ElementPrototype.h>
 #include <LibWeb/Bindings/ShadowRootPrototype.h>
+#include <LibWeb/Bindings/WindowGlobalMixin.h>
 #include <LibWeb/CSS/CSSStyleDeclaration.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/DOM/Attr.h>
@@ -22,6 +23,7 @@
 #include <LibWeb/HTML/AttributeNames.h>
 #include <LibWeb/HTML/EventLoop/Task.h>
 #include <LibWeb/HTML/TagNames.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/TreeBuilder.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
@@ -33,13 +35,8 @@ struct ShadowRootInit {
     bool delegates_focus = false;
 };
 
-// https://w3c.github.io/csswg-drafts/cssom-view-1/#dictdef-scrolloptions
-struct ScrollOptions {
-    Bindings::ScrollBehavior behavior { Bindings::ScrollBehavior::Auto };
-};
-
 // https://w3c.github.io/csswg-drafts/cssom-view-1/#dictdef-scrollintoviewoptions
-struct ScrollIntoViewOptions : public ScrollOptions {
+struct ScrollIntoViewOptions : public HTML::ScrollOptions {
     Bindings::ScrollLogicalPosition block { Bindings::ScrollLogicalPosition::Start };
     Bindings::ScrollLogicalPosition inline_ { Bindings::ScrollLogicalPosition::Nearest };
 };
@@ -74,6 +71,8 @@ public:
     DeprecatedString get_attribute(DeprecatedFlyString const& name) const;
     WebIDL::ExceptionOr<void> set_attribute(DeprecatedFlyString const& name, DeprecatedString const& value);
     WebIDL::ExceptionOr<void> set_attribute_ns(DeprecatedFlyString const& namespace_, DeprecatedFlyString const& qualified_name, DeprecatedString const& value);
+    WebIDL::ExceptionOr<JS::GCPtr<Attr>> set_attribute_node(Attr&);
+    WebIDL::ExceptionOr<JS::GCPtr<Attr>> set_attribute_node_ns(Attr&);
     void remove_attribute(DeprecatedFlyString const& name);
     WebIDL::ExceptionOr<bool> toggle_attribute(DeprecatedFlyString const& name, Optional<bool> force);
     size_t attribute_list_size() const { return m_attributes->length(); }
@@ -104,8 +103,8 @@ public:
         }
     }
 
-    bool has_class(DeprecatedFlyString const&, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
-    Vector<DeprecatedFlyString> const& class_names() const { return m_classes; }
+    bool has_class(FlyString const&, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
+    Vector<FlyString> const& class_names() const { return m_classes; }
 
     virtual void apply_presentational_hints(CSS::StyleProperties&) const { }
     virtual void parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value);
@@ -122,6 +121,7 @@ public:
 
     DeprecatedString name() const { return attribute(HTML::AttributeNames::name); }
 
+    CSS::StyleProperties* computed_css_values() { return m_computed_css_values.ptr(); }
     CSS::StyleProperties const* computed_css_values() const { return m_computed_css_values.ptr(); }
     void set_computed_css_values(RefPtr<CSS::StyleProperties> style) { m_computed_css_values = move(style); }
     NonnullRefPtr<CSS::StyleProperties> resolved_css_values();
@@ -286,7 +286,7 @@ private:
     RefPtr<CSS::StyleProperties> m_computed_css_values;
     HashMap<DeprecatedFlyString, CSS::StyleProperty> m_custom_properties;
 
-    Vector<DeprecatedFlyString> m_classes;
+    Vector<FlyString> m_classes;
 
     Array<JS::GCPtr<Layout::Node>, to_underlying(CSS::Selector::PseudoElement::PseudoElementCount)> m_pseudo_element_nodes;
 };

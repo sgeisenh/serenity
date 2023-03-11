@@ -9,7 +9,7 @@
 #include <AK/ScopedValueRollback.h>
 #include <AK/Vector.h>
 #include <Kernel/API/Unveil.h>
-#include <LibCore/File.h>
+#include <LibCore/DeprecatedFile.h>
 #include <alloca.h>
 #include <assert.h>
 #include <bits/pthread_cancel.h>
@@ -188,7 +188,7 @@ int execvpe(char const* filename, char* const argv[], char* const envp[])
 
     ScopedValueRollback errno_rollback(errno);
 
-    // TODO: Make this use the PATH search implementation from Core::File.
+    // TODO: Make this use the PATH search implementation from Core::DeprecatedFile.
     DeprecatedString path = getenv("PATH");
     if (path.is_empty())
         path = DEFAULT_PATH;
@@ -924,9 +924,9 @@ int gettid()
     return cached_tid;
 }
 
-int sysbeep()
+int sysbeep(int tone)
 {
-    int rc = syscall(SC_beep);
+    int rc = syscall(SC_beep, tone);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 

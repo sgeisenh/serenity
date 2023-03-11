@@ -249,11 +249,11 @@ Optional<Color> Color::from_string(StringView string)
         { 0x000000, nullptr }
     };
 
-    if (string.equals_ignoring_case("transparent"sv))
+    if (string.equals_ignoring_ascii_case("transparent"sv))
         return Color::from_argb(0x00000000);
 
     for (size_t i = 0; !web_colors[i].name.is_null(); ++i) {
-        if (string.equals_ignoring_case(web_colors[i].name))
+        if (string.equals_ignoring_ascii_case(web_colors[i].name))
             return Color::from_rgb(web_colors[i].color);
     }
 
@@ -313,30 +313,6 @@ Optional<Color> Color::from_string(StringView string)
         return {};
 
     return Color(r.value(), g.value(), b.value(), a.value());
-}
-
-Color Color::mixed_with(Color other, float weight) const
-{
-    if (alpha() == other.alpha() || with_alpha(0) == other.with_alpha(0)) {
-        return Gfx::Color {
-            round_to<u8>(mix<float>(red(), other.red(), weight)),
-            round_to<u8>(mix<float>(green(), other.green(), weight)),
-            round_to<u8>(mix<float>(blue(), other.blue(), weight)),
-            round_to<u8>(mix<float>(alpha(), other.alpha(), weight)),
-        };
-    }
-    // Fallback to slower, but more visually pleasing premultiplied alpha mix.
-    // This is needed for linear-gradient()s in LibWeb.
-    auto mixed_alpha = mix<float>(alpha(), other.alpha(), weight);
-    auto premultiplied_mix_channel = [&](float channel, float other_channel, float weight) {
-        return round_to<u8>(mix<float>(channel * alpha(), other_channel * other.alpha(), weight) / mixed_alpha);
-    };
-    return Gfx::Color {
-        premultiplied_mix_channel(red(), other.red(), weight),
-        premultiplied_mix_channel(green(), other.green(), weight),
-        premultiplied_mix_channel(blue(), other.blue(), weight),
-        round_to<u8>(mixed_alpha),
-    };
 }
 
 Vector<Color> Color::shades(u32 steps, float max) const

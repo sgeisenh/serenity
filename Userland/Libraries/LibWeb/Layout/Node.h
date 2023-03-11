@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -62,8 +62,8 @@ public:
     HTML::BrowsingContext const& browsing_context() const;
     HTML::BrowsingContext& browsing_context();
 
-    InitialContainingBlock const& root() const;
-    InitialContainingBlock& root();
+    Viewport const& root() const;
+    Viewport& root();
 
     bool is_root_element() const;
 
@@ -86,14 +86,17 @@ public:
     virtual bool is_block_container() const { return false; }
     virtual bool is_break_node() const { return false; }
     virtual bool is_text_node() const { return false; }
-    virtual bool is_initial_containing_block_box() const { return false; }
+    virtual bool is_viewport() const { return false; }
     virtual bool is_svg_box() const { return false; }
     virtual bool is_svg_geometry_box() const { return false; }
+    virtual bool is_svg_svg_box() const { return false; }
     virtual bool is_label() const { return false; }
     virtual bool is_replaced_box() const { return false; }
+    virtual bool is_list_item_box() const { return false; }
     virtual bool is_list_item_marker_box() const { return false; }
     virtual bool is_table_wrapper() const { return false; }
     virtual bool is_table() const { return false; }
+    virtual bool is_node_with_style_and_box_model_metrics() const { return false; }
 
     template<typename T>
     bool fast_is() const = delete;
@@ -195,9 +198,9 @@ protected:
 
 private:
     CSS::ComputedValues m_computed_values;
-    RefPtr<Gfx::Font> m_font;
+    RefPtr<Gfx::Font const> m_font;
     CSSPixels m_line_height { 0 };
-    RefPtr<CSS::AbstractImageStyleValue> m_list_style_image;
+    RefPtr<CSS::AbstractImageStyleValue const> m_list_style_image;
 };
 
 class NodeWithStyleAndBoxModelMetrics : public NodeWithStyle {
@@ -219,8 +222,13 @@ protected:
     }
 
 private:
+    virtual bool is_node_with_style_and_box_model_metrics() const final { return true; }
+
     BoxModelMetrics m_box_model;
 };
+
+template<>
+inline bool Node::fast_is<NodeWithStyleAndBoxModelMetrics>() const { return is_node_with_style_and_box_model_metrics(); }
 
 inline Gfx::Font const& Node::font() const
 {

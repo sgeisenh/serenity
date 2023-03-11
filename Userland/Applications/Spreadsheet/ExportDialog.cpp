@@ -88,7 +88,7 @@ CSVExportDialogPage::CSVExportDialogPage(Sheet const& sheet)
     update_preview();
 }
 
-auto CSVExportDialogPage::generate(AK::Stream& stream, GenerationType type) -> ErrorOr<void>
+auto CSVExportDialogPage::generate(Stream& stream, GenerationType type) -> ErrorOr<void>
 {
     auto delimiter = TRY([this]() -> ErrorOr<DeprecatedString> {
         if (m_delimiter_other_radio->is_checked()) {
@@ -178,7 +178,7 @@ void CSVExportDialogPage::update_preview()
         m_data_preview_text_editor->set_text(DeprecatedString::formatted("Cannot update preview: {}", maybe_error.error()));
 }
 
-ErrorOr<void> ExportDialog::make_and_run_for(StringView mime, Core::Stream::File& file, DeprecatedString filename, Workbook& workbook)
+ErrorOr<void> ExportDialog::make_and_run_for(StringView mime, Core::File& file, DeprecatedString filename, Workbook& workbook)
 {
     auto wizard = GUI::WizardDialog::construct(GUI::Application::the()->active_window());
     wizard->set_title("File Export Wizard");
@@ -202,7 +202,7 @@ ErrorOr<void> ExportDialog::make_and_run_for(StringView mime, Core::Stream::File
     auto export_worksheet = [&]() -> ErrorOr<void> {
         JsonArray array;
         for (auto& sheet : workbook.sheets())
-            array.append(sheet.to_json());
+            array.append(sheet->to_json());
 
         auto file_content = array.to_deprecated_string();
         return file.write_entire_buffer(file_content.bytes());

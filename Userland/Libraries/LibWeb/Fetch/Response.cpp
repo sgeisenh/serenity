@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2022-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -43,7 +43,7 @@ void Response::visit_edges(Cell::Visitor& visitor)
 
 // https://fetch.spec.whatwg.org/#concept-body-mime-type
 // https://fetch.spec.whatwg.org/#ref-for-concept-header-extract-mime-type%E2%91%A7
-Optional<MimeSniff::MimeType> Response::mime_type_impl() const
+ErrorOr<Optional<MimeSniff::MimeType>> Response::mime_type_impl() const
 {
     // Objects including the Body interface mixin need to define an associated MIME type algorithm which takes no arguments and returns failure or a MIME type.
     // A Response object’s MIME type is to return the result of extracting a MIME type from its response’s header list.
@@ -73,14 +73,14 @@ Optional<Infrastructure::Body&> Response::body_impl()
 }
 
 // https://fetch.spec.whatwg.org/#response-create
-JS::NonnullGCPtr<Response> Response::create(JS::Realm& realm, JS::NonnullGCPtr<Infrastructure::Response> response, Headers::Guard guard)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::create(JS::Realm& realm, JS::NonnullGCPtr<Infrastructure::Response> response, Headers::Guard guard)
 {
     // 1. Let responseObject be a new Response object with realm.
     // 2. Set responseObject’s response to response.
-    auto response_object = realm.heap().allocate<Response>(realm, realm, response).release_allocated_value_but_fixme_should_propagate_errors();
+    auto response_object = MUST_OR_THROW_OOM(realm.heap().allocate<Response>(realm, realm, response));
 
     // 3. Set responseObject’s headers to a new Headers object with realm, whose headers list is response’s headers list and guard is guard.
-    response_object->m_headers = realm.heap().allocate<Headers>(realm, realm, response->header_list()).release_allocated_value_but_fixme_should_propagate_errors();
+    response_object->m_headers = MUST_OR_THROW_OOM(realm.heap().allocate<Headers>(realm, realm, response->header_list()));
     response_object->m_headers->set_guard(guard);
 
     // 4. Return responseObject.
@@ -160,7 +160,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::construct_impl(JS::Rea
 }
 
 // https://fetch.spec.whatwg.org/#dom-response-error
-JS::NonnullGCPtr<Response> Response::error(JS::VM& vm)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::error(JS::VM& vm)
 {
     // The static error() method steps are to return the result of creating a Response object, given a new network error, "immutable", and this’s relevant Realm.
     // FIXME: How can we reliably get 'this', i.e. the object the function was called on, in IDL-defined functions?
@@ -168,7 +168,7 @@ JS::NonnullGCPtr<Response> Response::error(JS::VM& vm)
 }
 
 // https://fetch.spec.whatwg.org/#dom-response-redirect
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::redirect(JS::VM& vm, DeprecatedString const& url, u16 status)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::redirect(JS::VM& vm, String const& url, u16 status)
 {
     auto& realm = *vm.current_realm();
 
@@ -186,7 +186,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::redirect(JS::VM& vm, D
 
     // 4. Let responseObject be the result of creating a Response object, given a new response, "immutable", and this’s relevant Realm.
     // FIXME: How can we reliably get 'this', i.e. the object the function was called on, in IDL-defined functions?
-    auto response_object = Response::create(realm, Infrastructure::Response::create(vm), Headers::Guard::Immutable);
+    auto response_object = TRY(Response::create(realm, Infrastructure::Response::create(vm), Headers::Guard::Immutable));
 
     // 5. Set responseObject’s response’s status to status.
     response_object->response()->set_status(status);
@@ -215,7 +215,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::json(JS::VM& vm, JS::V
 
     // 3. Let responseObject be the result of creating a Response object, given a new response, "response", and this’s relevant Realm.
     // FIXME: How can we reliably get 'this', i.e. the object the function was called on, in IDL-defined functions?
-    auto response_object = Response::create(realm, Infrastructure::Response::create(vm), Headers::Guard::Response);
+    auto response_object = TRY(Response::create(realm, Infrastructure::Response::create(vm), Headers::Guard::Response));
 
     // 4. Perform initialize a response given responseObject, init, and (body, "application/json").
     auto body_with_type = Infrastructure::BodyWithType {
@@ -236,12 +236,14 @@ Bindings::ResponseType Response::type() const
 }
 
 // https://fetch.spec.whatwg.org/#dom-response-url
-DeprecatedString Response::url() const
+WebIDL::ExceptionOr<String> Response::url() const
 {
+    auto& vm = this->vm();
+
     // The url getter steps are to return the empty string if this’s response’s URL is null; otherwise this’s response’s URL, serialized with exclude fragment set to true.
     return !m_response->url().has_value()
-        ? DeprecatedString::empty()
-        : m_response->url()->serialize(AK::URL::ExcludeFragment::Yes);
+        ? String {}
+        : TRY_OR_THROW_OOM(vm, String::from_deprecated_string(m_response->url()->serialize(AK::URL::ExcludeFragment::Yes)));
 }
 
 // https://fetch.spec.whatwg.org/#dom-response-redirected
@@ -266,10 +268,12 @@ bool Response::ok() const
 }
 
 // https://fetch.spec.whatwg.org/#dom-response-statustext
-DeprecatedString Response::status_text() const
+WebIDL::ExceptionOr<String> Response::status_text() const
 {
+    auto& vm = this->vm();
+
     // The statusText getter steps are to return this’s response’s status message.
-    return DeprecatedString::copy(m_response->status_message());
+    return TRY_OR_THROW_OOM(vm, String::from_utf8(m_response->status_message()));
 }
 
 // https://fetch.spec.whatwg.org/#dom-response-headers
@@ -282,17 +286,17 @@ JS::NonnullGCPtr<Headers> Response::headers() const
 // https://fetch.spec.whatwg.org/#dom-response-clone
 WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::clone() const
 {
-    auto& vm = this->vm();
+    auto& realm = this->realm();
 
     // 1. If this is unusable, then throw a TypeError.
     if (is_unusable())
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Response is unusable"sv };
 
     // 2. Let clonedResponse be the result of cloning this’s response.
-    auto cloned_response = TRY(m_response->clone(vm));
+    auto cloned_response = TRY(m_response->clone(realm));
 
     // 3. Return the result of creating a Response object, given clonedResponse, this’s headers’s guard, and this’s relevant Realm.
-    return Response::create(HTML::relevant_realm(*this), cloned_response, m_headers->guard());
+    return TRY(Response::create(HTML::relevant_realm(*this), cloned_response, m_headers->guard()));
 }
 
 }

@@ -10,9 +10,10 @@
 
 #include "Session.h"
 #include "Client.h"
+#include <AK/JsonObject.h>
+#include <AK/ScopeGuard.h>
 #include <LibCore/LocalServer.h>
 #include <LibCore/StandardPaths.h>
-#include <LibCore/Stream.h>
 #include <LibCore/System.h>
 #include <unistd.h>
 
@@ -46,7 +47,14 @@ ErrorOr<NonnullRefPtr<Core::LocalServer>> Session::create_server(NonnullRefPtr<S
         }
 
         dbgln("WebDriver is connected to WebContent socket");
-        m_web_content_connection = maybe_connection.release_value();
+        auto web_content_connection = maybe_connection.release_value();
+
+        auto handle_name = String::formatted("window-{}"sv, m_next_handle_id).release_value_but_fixme_should_propagate_errors();
+        m_next_handle_id++;
+        m_windows.set(handle_name, Session::Window { handle_name, move(web_content_connection) });
+
+        if (m_current_window_handle.is_empty())
+            m_current_window_handle = handle_name;
 
         promise->resolve({});
     };
@@ -63,7 +71,7 @@ ErrorOr<void> Session::start(LaunchBrowserCallbacks const& callbacks)
     auto promise = TRY(ServerPromise::try_create());
 
     m_web_content_socket_path = DeprecatedString::formatted("{}/webdriver/session_{}_{}", TRY(Core::StandardPaths::runtime_directory()), getpid(), m_id);
-    auto web_content_server = TRY(create_server(promise));
+    m_web_content_server = TRY(create_server(promise));
 
     if (m_options.headless)
         m_browser_pid = TRY(callbacks.launch_headless_browser(*m_web_content_socket_path));
@@ -86,10 +94,10 @@ Web::WebDriver::Response Session::stop()
 
     // 1. Perform the following substeps based on the remote end’s type:
     // NOTE: We perform the "Remote end is an endpoint node" steps in the WebContent process.
-    m_web_content_connection->close_session();
+    web_content_connection().close_session();
 
     // 2. Remove the current session from active sessions.
-    // NOTE: Handled by WebDriver::Client.
+    m_client->close_session(session_id());
 
     // 3. Perform any implementation-specific cleanup steps.
     if (m_browser_pid.has_value()) {
@@ -105,6 +113,59 @@ Web::WebDriver::Response Session::stop()
 
     // 4. If an error has occurred in any of the steps above, return the error, otherwise return success with data null.
     return JsonValue {};
+}
+
+// 11.2 Close Window, https://w3c.github.io/webdriver/#dfn-close-window
+Web::WebDriver::Response Session::close_window()
+{
+    {
+        // Defer removing the window handle from this session until after we know we are done with its connection.
+        ScopeGuard guard { [this] { m_windows.remove(m_current_window_handle); } };
+
+        // 3. Close the current top-level browsing context.
+        TRY(web_content_connection().close_window());
+
+        // 4. If there are no more open top-level browsing contexts, then close the session.
+        if (m_windows.size() == 1)
+            TRY(stop());
+    }
+
+    // 5. Return the result of running the remote end steps for the Get Window Handles command.
+    return get_window_handles();
+}
+
+// 11.3 Switch to Window, https://w3c.github.io/webdriver/#dfn-switch-to-window
+Web::WebDriver::Response Session::switch_to_window(StringView handle)
+{
+    // 4. If handle is equal to the associated window handle for some top-level browsing context in the
+    //    current session, let context be the that browsing context, and set the current top-level
+    //    browsing context with context.
+    //    Otherwise, return error with error code no such window.
+    if (auto it = m_windows.find(handle); it != m_windows.end())
+        m_current_window_handle = it->key;
+    else
+        return Web::WebDriver::Error::from_code(Web::WebDriver::ErrorCode::NoSuchWindow, "Window not found");
+
+    // FIXME: 5. Update any implementation-specific state that would result from the user selecting the current
+    //          browsing context for interaction, without altering OS-level focus.
+
+    // 6. Return success with data null.
+    return JsonValue {};
+}
+
+// 11.4 Get Window Handles, https://w3c.github.io/webdriver/#dfn-get-window-handles
+Web::WebDriver::Response Session::get_window_handles() const
+{
+    // 1. Let handles be a JSON List.
+    JsonArray handles {};
+
+    // 2. For each top-level browsing context in the remote end, push the associated window handle onto handles.
+    for (auto const& window_handle : m_windows.keys()) {
+        handles.append(JsonValue(window_handle));
+    }
+
+    // 3. Return success with data handles.
+    return JsonValue { move(handles) };
 }
 
 }

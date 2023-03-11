@@ -19,9 +19,11 @@
 class ChessWidget final
     : public GUI::Frame
     , public Config::Listener {
-    C_OBJECT(ChessWidget);
+    C_OBJECT_ABSTRACT(ChessWidget);
 
 public:
+    static ErrorOr<NonnullRefPtr<ChessWidget>> try_create();
+
     virtual ~ChessWidget() override = default;
 
     virtual void paint_event(GUI::PaintEvent&) override;
@@ -46,21 +48,21 @@ public:
 
     bool drag_enabled() const { return m_drag_enabled; }
     void set_drag_enabled(bool e) { m_drag_enabled = e; }
-    RefPtr<Gfx::Bitmap> get_piece_graphic(Chess::Piece const& piece) const;
+    RefPtr<Gfx::Bitmap const> get_piece_graphic(Chess::Piece const& piece) const;
 
     bool show_available_moves() const { return m_show_available_moves; }
     void set_show_available_moves(bool e) { m_show_available_moves = e; }
 
     DeprecatedString get_fen() const;
-    ErrorOr<void> import_pgn(Core::Stream::File&);
-    ErrorOr<void> export_pgn(Core::Stream::File&) const;
+    ErrorOr<void> import_pgn(Core::File&);
+    ErrorOr<void> export_pgn(Core::File&) const;
 
     int resign();
     void flip_board();
     void reset();
 
     struct BoardTheme {
-        DeprecatedString name;
+        StringView name;
         Color dark_square_color;
         Color light_square_color;
     };
@@ -109,7 +111,7 @@ public:
     };
 
 private:
-    ChessWidget();
+    ChessWidget() = default;
 
     virtual void config_string_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, DeprecatedString const& value) override;
     virtual void config_bool_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, bool value) override;
@@ -120,13 +122,13 @@ private:
     size_t m_playback_move_number { 0 };
     BoardMarking m_current_marking;
     Vector<BoardMarking> m_board_markings;
-    BoardTheme m_board_theme { "Beige", Color::from_rgb(0xb58863), Color::from_rgb(0xf0d9b5) };
+    BoardTheme m_board_theme { "Beige"sv, Color::from_rgb(0xb58863), Color::from_rgb(0xf0d9b5) };
     Color m_move_highlight_color { Color::from_argb(0x66ccee00) };
     Color m_marking_primary_color { Color::from_argb(0x66ff0000) };
     Color m_marking_alternate_color { Color::from_argb(0x66ffaa00) };
     Color m_marking_secondary_color { Color::from_argb(0x6655dd55) };
     Chess::Color m_side { Chess::Color::White };
-    HashMap<Chess::Piece, RefPtr<Gfx::Bitmap>> m_pieces;
+    HashMap<Chess::Piece, RefPtr<Gfx::Bitmap const>> m_pieces;
     DeprecatedString m_piece_set;
     Chess::Square m_moving_square { 50, 50 };
     Gfx::IntPoint m_drag_point;

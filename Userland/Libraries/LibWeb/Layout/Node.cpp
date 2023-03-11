@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,10 +11,10 @@
 #include <LibWeb/HTML/HTMLHtmlElement.h>
 #include <LibWeb/Layout/BlockContainer.h>
 #include <LibWeb/Layout/FormattingContext.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/TableBox.h>
 #include <LibWeb/Layout/TextNode.h>
+#include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Platform/FontPlugin.h>
 
 namespace Web::Layout {
@@ -59,7 +59,18 @@ bool Node::is_out_of_flow(FormattingContext const& formatting_context) const
 
 bool Node::can_contain_boxes_with_position_absolute() const
 {
-    return computed_values().position() != CSS::Position::Static || is<InitialContainingBlock>(*this);
+    if (computed_values().position() != CSS::Position::Static)
+        return true;
+
+    if (is<Viewport>(*this))
+        return true;
+
+    // https://w3c.github.io/csswg-drafts/css-transforms-1/#propdef-transform
+    // Any computed value other than none for the transform affects containing block and stacking context
+    if (!computed_values().transformations().is_empty())
+        return true;
+
+    return false;
 }
 
 static Box const* nearest_ancestor_capable_of_forming_a_containing_block(Node const& node)
@@ -88,7 +99,7 @@ Box const* Node::containing_block() const
             ancestor = ancestor->parent();
         while (ancestor && ancestor->is_anonymous())
             ancestor = nearest_ancestor_capable_of_forming_a_containing_block(*ancestor);
-        return static_cast<BlockContainer const*>(ancestor);
+        return static_cast<Box const*>(ancestor);
     }
 
     if (position == CSS::Position::Fixed)
@@ -106,7 +117,7 @@ bool Node::establishes_stacking_context() const
 
     if (!has_style())
         return false;
-    if (dom_node() == &document().root())
+    if (is_root_element() || dom_node() == &document().root())
         return true;
     auto position = computed_values().position();
 
@@ -152,13 +163,13 @@ HTML::BrowsingContext& Node::browsing_context()
     return *m_browsing_context;
 }
 
-InitialContainingBlock const& Node::root() const
+Viewport const& Node::root() const
 {
     VERIFY(document().layout_node());
     return *document().layout_node();
 }
 
-InitialContainingBlock& Node::root()
+Viewport& Node::root()
 {
     VERIFY(document().layout_node());
     return *document().layout_node();
@@ -251,6 +262,9 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
 {
     auto& computed_values = static_cast<CSS::MutableComputedValues&>(m_computed_values);
 
+    // NOTE: color must be set first to ensure currentColor can be resolved in other properties (e.g. background-color).
+    computed_values.set_color(computed_style.color_or_fallback(CSS::PropertyID::Color, *this, CSS::InitialValues::color()));
+
     // NOTE: We have to be careful that font-related properties get set in the right order.
     //       m_font is used by Length::to_px() when resolving sizes against this layout node.
     //       That's why it has to be set before everything else.
@@ -277,7 +291,7 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
                 return 1;
         };
 
-        auto value_for_layer = [](auto& style_value, size_t layer_index) -> RefPtr<CSS::StyleValue> {
+        auto value_for_layer = [](auto& style_value, size_t layer_index) -> RefPtr<CSS::StyleValue const> {
             if (style_value->is_value_list())
                 return style_value->as_value_list().value_at(layer_index, true);
             return style_value;
@@ -301,7 +315,7 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
             if (auto image_value = value_for_layer(images, layer_index); image_value) {
                 if (image_value->is_abstract_image()) {
                     layer.background_image = image_value->as_abstract_image();
-                    layer.background_image->load_any_resources(document());
+                    const_cast<CSS::AbstractImageStyleValue&>(*layer.background_image).load_any_resources(document());
                 }
             }
 
@@ -517,10 +531,8 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
     auto list_style_image = computed_style.property(CSS::PropertyID::ListStyleImage);
     if (list_style_image->is_abstract_image()) {
         m_list_style_image = list_style_image->as_abstract_image();
-        m_list_style_image->load_any_resources(document());
+        const_cast<CSS::AbstractImageStyleValue&>(*m_list_style_image).load_any_resources(document());
     }
-
-    computed_values.set_color(computed_style.color_or_fallback(CSS::PropertyID::Color, *this, CSS::InitialValues::color()));
 
     // FIXME: The default text decoration color value is `currentcolor`, but since we can't resolve that easily,
     //        we just manually grab the value from `color`. This makes it dependent on `color` being
@@ -574,11 +586,11 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
             auto resolve_border_width = [&]() {
                 auto value = computed_style.property(width_property);
                 if (value->is_calculated())
-                    return CSS::Length::make_calculated(value->as_calculated()).to_px(*this).value();
+                    return CSS::Length::make_calculated(const_cast<CSS::CalculatedStyleValue&>(value->as_calculated())).to_px(*this).value();
                 if (value->has_length())
                     return value->to_length().to_px(*this).value();
                 if (value->is_identifier()) {
-                    // FIXME: These values should depend on something, e.g. a font size.
+                    // https://www.w3.org/TR/css-backgrounds-3/#valdef-line-width-thin
                     switch (value->to_identifier()) {
                     case CSS::ValueID::Thin:
                         return 1.0f;

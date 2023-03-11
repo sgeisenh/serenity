@@ -44,7 +44,7 @@ ThrowCompletionOr<NonnullGCPtr<Object>> ShadowRealmConstructor::construct(Functi
     auto& vm = this->vm();
 
     // 3. Let realmRec be CreateRealm().
-    auto realm = Realm::create(vm);
+    auto realm = MUST_OR_THROW_OOM(Realm::create(vm));
 
     // 5. Let context be a new execution context.
     auto context = ExecutionContext { vm.heap() };
@@ -70,7 +70,7 @@ ThrowCompletionOr<NonnullGCPtr<Object>> ShadowRealmConstructor::construct(Functi
     auto& global_object = set_default_global_bindings(object->shadow_realm());
 
     // FIXME: 12. Perform ? HostInitializeShadowRealm(O.[[ShadowRealm]]).
-    global_object.initialize(object->shadow_realm());
+    MUST_OR_THROW_OOM(global_object.initialize(object->shadow_realm()));
 
     // 13. Return O.
     return object;

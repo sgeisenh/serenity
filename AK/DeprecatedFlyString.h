@@ -29,7 +29,7 @@ public:
     {
     }
 
-    static DeprecatedFlyString from_fly_impl(NonnullRefPtr<StringImpl> impl)
+    static DeprecatedFlyString from_fly_impl(NonnullRefPtr<StringImpl const> impl)
     {
         VERIFY(impl->is_fly());
         DeprecatedFlyString string;
@@ -78,7 +78,7 @@ public:
     Optional<float> to_float(TrimWhitespace = TrimWhitespace::Yes) const;
 #endif
 
-    bool equals_ignoring_case(StringView) const;
+    bool equals_ignoring_ascii_case(StringView) const;
     bool starts_with(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
     bool ends_with(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
 
@@ -91,7 +91,7 @@ public:
     }
 
 private:
-    RefPtr<StringImpl> m_impl;
+    RefPtr<StringImpl const> m_impl;
 };
 
 template<>

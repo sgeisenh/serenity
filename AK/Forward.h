@@ -17,15 +17,14 @@ template<size_t inline_capacity>
 class ByteBuffer;
 }
 
-class Bitmap;
 class BigEndianInputBitStream;
 class BigEndianOutputBitStream;
+class Bitmap;
 using ByteBuffer = Detail::ByteBuffer<32>;
 class CircularBuffer;
-class DeprecatedInputStream;
-class DeprecatedInputMemoryStream;
-class DeprecatedOutputStream;
-class DeprecatedOutputMemoryStream;
+class DeprecatedFlyString;
+class DeprecatedString;
+class DeprecatedStringCodePointIterator;
 class Error;
 class FlyString;
 class GenericLexer;
@@ -33,21 +32,20 @@ class IPv4Address;
 class JsonArray;
 class JsonObject;
 class JsonValue;
+class LexicalPath;
 class LittleEndianInputBitStream;
 class LittleEndianOutputBitStream;
-class StackInfo;
-class DeprecatedFlyString;
-class DeprecatedString;
-class DeprecatedStringCodePointIterator;
 class SeekableStream;
+class StackInfo;
 class Stream;
+class String;
 class StringBuilder;
 class StringImpl;
 class StringView;
 class Time;
 class URL;
-class String;
 class Utf16View;
+class Utf32CodePointIterator;
 class Utf32View;
 class Utf8CodePointIterator;
 class Utf8View;
@@ -61,7 +59,10 @@ struct Array;
 template<typename Container, typename ValueType>
 class SimpleIterator;
 
-using ReadonlyBytes = Span<u8 const>;
+template<typename T>
+using ReadonlySpan = Span<T const>;
+
+using ReadonlyBytes = ReadonlySpan<u8>;
 using Bytes = Span<u8>;
 
 template<typename T, AK::MemoryOrder DefaultMemoryOrder>
@@ -112,21 +113,12 @@ class NonnullRefPtr;
 template<typename T>
 class NonnullOwnPtr;
 
-template<typename T, size_t inline_capacity = 0>
-class NonnullOwnPtrVector;
-
-template<typename T, size_t inline_capacity = 0>
-class NonnullRefPtrVector;
-
 template<typename T>
 class Optional;
 
 #ifdef KERNEL
 template<typename T>
 class NonnullLockRefPtr;
-
-template<typename T, size_t inline_capacity = 0>
-class NonnullLockRefPtrVector;
 
 template<typename T>
 struct LockRefPtrTraits;
@@ -164,10 +156,6 @@ using AK::Bytes;
 using AK::CircularBuffer;
 using AK::CircularQueue;
 using AK::DeprecatedFlyString;
-using AK::DeprecatedInputMemoryStream;
-using AK::DeprecatedInputStream;
-using AK::DeprecatedOutputMemoryStream;
-using AK::DeprecatedOutputStream;
 using AK::DeprecatedString;
 using AK::DeprecatedStringCodePointIterator;
 using AK::DoublyLinkedList;
@@ -183,12 +171,11 @@ using AK::IPv4Address;
 using AK::JsonArray;
 using AK::JsonObject;
 using AK::JsonValue;
+using AK::LexicalPath;
 using AK::LittleEndianInputBitStream;
 using AK::LittleEndianOutputBitStream;
 using AK::NonnullOwnPtr;
-using AK::NonnullOwnPtrVector;
 using AK::NonnullRefPtr;
-using AK::NonnullRefPtrVector;
 using AK::Optional;
 using AK::OwnPtr;
 using AK::ReadonlyBytes;
@@ -206,6 +193,7 @@ using AK::Time;
 using AK::Traits;
 using AK::URL;
 using AK::Utf16View;
+using AK::Utf32CodePointIterator;
 using AK::Utf32View;
 using AK::Utf8CodePointIterator;
 using AK::Utf8View;
@@ -215,7 +203,6 @@ using AK::Vector;
 using AK::LockRefPtr;
 using AK::LockRefPtrTraits;
 using AK::NonnullLockRefPtr;
-using AK::NonnullLockRefPtrVector;
 #    endif
 
 #endif

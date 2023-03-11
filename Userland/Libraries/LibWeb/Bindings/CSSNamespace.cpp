@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -34,13 +34,15 @@ JS_DEFINE_NATIVE_FUNCTION(CSSNamespace::escape)
     if (!vm.argument_count())
         return vm.throw_completion<JS::TypeError>(JS::ErrorType::BadArgCountAtLeastOne, "CSS.escape");
 
-    auto identifier = TRY(vm.argument(0).to_deprecated_string(vm));
-    return JS::PrimitiveString::create(vm, Web::CSS::serialize_an_identifier(identifier));
+    auto identifier = TRY(vm.argument(0).to_string(vm));
+    return JS::PrimitiveString::create(vm, TRY_OR_THROW_OOM(vm, Web::CSS::serialize_an_identifier(identifier)));
 }
 
 // https://www.w3.org/TR/css-conditional-3/#dom-css-supports
 JS_DEFINE_NATIVE_FUNCTION(CSSNamespace::supports)
 {
+    auto& realm = *vm.current_realm();
+
     if (!vm.argument_count())
         return vm.throw_completion<JS::TypeError>(JS::ErrorType::BadArgCountAtLeastOne, "CSS.supports");
 
@@ -53,7 +55,7 @@ JS_DEFINE_NATIVE_FUNCTION(CSSNamespace::supports)
         auto property = CSS::property_id_from_string(property_name);
         if (property != CSS::PropertyID::Invalid) {
             auto value_string = TRY(vm.argument(1).to_deprecated_string(vm));
-            if (parse_css_value({}, value_string, property))
+            if (parse_css_value(CSS::Parser::ParsingContext { realm }, value_string, property))
                 return JS::Value(true);
         }
         // Otherwise, if property is a custom property name string, return true.
@@ -69,11 +71,11 @@ JS_DEFINE_NATIVE_FUNCTION(CSSNamespace::supports)
         auto supports_text = TRY(vm.argument(0).to_deprecated_string(vm));
 
         // If conditionText, parsed and evaluated as a <supports-condition>, would return true, return true.
-        if (auto supports = parse_css_supports({}, supports_text); supports && supports->matches())
+        if (auto supports = parse_css_supports(CSS::Parser::ParsingContext { realm }, supports_text); supports && supports->matches())
             return JS::Value(true);
 
         // Otherwise, If conditionText, wrapped in parentheses and then parsed and evaluated as a <supports-condition>, would return true, return true.
-        if (auto supports = parse_css_supports({}, DeprecatedString::formatted("({})", supports_text)); supports && supports->matches())
+        if (auto supports = parse_css_supports(CSS::Parser::ParsingContext { realm }, DeprecatedString::formatted("({})", supports_text)); supports && supports->matches())
             return JS::Value(true);
 
         // Otherwise, return false.

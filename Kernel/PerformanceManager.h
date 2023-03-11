@@ -9,6 +9,7 @@
 #include <Kernel/PerformanceEventBuffer.h>
 #include <Kernel/Process.h>
 #include <Kernel/Thread.h>
+#include <Kernel/Time/TimeManagement.h>
 
 namespace Kernel {
 
@@ -127,7 +128,7 @@ public:
         }
     }
 
-    static void add_read_event(Thread& thread, int fd, size_t size, OpenFileDescription const& file_description, u64 start_timestamp, ErrorOr<FlatPtr> result)
+    static void add_read_event(Thread& thread, int fd, size_t size, OpenFileDescription const& file_description, u64 start_timestamp, ErrorOr<FlatPtr> const& result)
     {
         if (thread.is_profiling_suppressed())
             return;

@@ -11,11 +11,12 @@
 #include "ViewWidget.h"
 #include <AK/LexicalPath.h>
 #include <AK/StringBuilder.h>
-#include <LibCore/DirIterator.h>
-#include <LibCore/File.h>
+#include <LibCore/DeprecatedFile.h>
+#include <LibCore/Directory.h>
 #include <LibCore/MappedFile.h>
 #include <LibCore/MimeData.h>
 #include <LibCore/Timer.h>
+#include <LibGUI/Application.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Orientation.h>
@@ -81,13 +82,13 @@ Vector<DeprecatedString> ViewWidget::load_files_from_directory(DeprecatedString 
     Vector<DeprecatedString> files_in_directory;
 
     auto current_dir = LexicalPath(path).parent().string();
-    Core::DirIterator iterator(current_dir, Core::DirIterator::Flags::SkipDots);
-    while (iterator.has_next()) {
-        DeprecatedString file = iterator.next_full_path();
-        if (!Gfx::Bitmap::is_path_a_supported_image_format(file))
-            continue;
-        files_in_directory.append(file);
-    }
+    // FIXME: Propagate errors
+    (void)Core::Directory::for_each_entry(current_dir, Core::DirIterator::Flags::SkipDots, [&](auto const& entry, auto const& directory) -> ErrorOr<IterationDecision> {
+        auto full_path = LexicalPath::join(directory.path().string(), entry.name).string();
+        if (Gfx::Bitmap::is_path_a_supported_image_format(full_path))
+            files_in_directory.append(full_path);
+        return IterationDecision::Continue;
+    });
     return files_in_directory;
 }
 
@@ -195,7 +196,8 @@ void ViewWidget::load_from_file(DeprecatedString const& path)
         m_timer->stop();
     }
 
-    m_path = Core::File::real_path_for(path);
+    m_path = Core::DeprecatedFile::real_path_for(path);
+    GUI::Application::the()->set_most_recently_open_file(String::from_utf8(path).release_value_but_fixme_should_propagate_errors());
     reset_view();
 }
 

@@ -8,7 +8,6 @@
 #pragma once
 
 #include <AK/CircularQueue.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <LibGUI/Frame.h>
 
 namespace Snake {
@@ -30,7 +29,7 @@ public:
     Function<bool(u32)> on_score_update;
 
 private:
-    explicit Game(NonnullRefPtrVector<Gfx::Bitmap> food_bitmaps);
+    explicit Game(Vector<NonnullRefPtr<Gfx::Bitmap>> food_bitmaps);
 
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void keydown_event(GUI::KeyEvent&) override;
@@ -76,7 +75,7 @@ private:
     unsigned m_score { 0 };
     bool m_is_new_high_score { false };
 
-    NonnullRefPtrVector<Gfx::Bitmap> m_food_bitmaps;
+    Vector<NonnullRefPtr<Gfx::Bitmap>> m_food_bitmaps;
 
     Gfx::Color m_snake_base_color { Color::Yellow };
 };

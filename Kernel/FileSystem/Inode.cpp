@@ -15,7 +15,6 @@
 #include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
 #include <Kernel/KBufferBuilder.h>
-#include <Kernel/Library/NonnullLockRefPtrVector.h>
 #include <Kernel/Memory/SharedInodeVMObject.h>
 #include <Kernel/Net/LocalSocket.h>
 #include <Kernel/Process.h>
@@ -31,7 +30,7 @@ SpinlockProtected<Inode::AllInstancesList, LockRank::None>& Inode::all_instances
 
 void Inode::sync_all()
 {
-    NonnullLockRefPtrVector<Inode, 32> inodes;
+    Vector<NonnullRefPtr<Inode>, 32> inodes;
     Inode::all_instances().with([&](auto& all_inodes) {
         for (auto& inode : all_inodes) {
             if (inode.is_metadata_dirty())
@@ -40,8 +39,8 @@ void Inode::sync_all()
     });
 
     for (auto& inode : inodes) {
-        VERIFY(inode.is_metadata_dirty());
-        (void)inode.flush_metadata();
+        VERIFY(inode->is_metadata_dirty());
+        (void)inode->flush_metadata();
     }
 }
 
@@ -143,7 +142,7 @@ ErrorOr<void> Inode::set_shared_vmobject(Memory::SharedInodeVMObject& vmobject)
 
 LockRefPtr<LocalSocket> Inode::bound_socket() const
 {
-    return m_bound_socket;
+    return m_bound_socket.strong_ref();
 }
 
 bool Inode::bind_socket(LocalSocket& socket)
@@ -181,7 +180,7 @@ void Inode::unregister_watcher(Badge<InodeWatcher>, InodeWatcher& watcher)
     });
 }
 
-ErrorOr<NonnullLockRefPtr<FIFO>> Inode::fifo()
+ErrorOr<NonnullRefPtr<FIFO>> Inode::fifo()
 {
     MutexLocker locker(m_inode_lock);
     VERIFY(metadata().is_fifo());
@@ -190,7 +189,7 @@ ErrorOr<NonnullLockRefPtr<FIFO>> Inode::fifo()
     if (!m_fifo)
         m_fifo = TRY(FIFO::try_create(metadata().uid));
 
-    return NonnullLockRefPtr { *m_fifo };
+    return NonnullRefPtr { *m_fifo };
 }
 
 void Inode::set_metadata_dirty(bool metadata_dirty)

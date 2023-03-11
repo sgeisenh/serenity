@@ -217,7 +217,7 @@ void Process::register_new(Process& process)
     });
 }
 
-ErrorOr<NonnullLockRefPtr<Process>> Process::try_create_user_process(LockRefPtr<Thread>& first_thread, StringView path, UserID uid, GroupID gid, NonnullOwnPtrVector<KString> arguments, NonnullOwnPtrVector<KString> environment, TTY* tty)
+ErrorOr<NonnullLockRefPtr<Process>> Process::try_create_user_process(LockRefPtr<Thread>& first_thread, StringView path, UserID uid, GroupID gid, Vector<NonnullOwnPtr<KString>> arguments, Vector<NonnullOwnPtr<KString>> environment, TTY* tty)
 {
     auto parts = path.split_view('/');
     if (arguments.is_empty()) {
@@ -334,7 +334,11 @@ Process::Process(NonnullOwnPtr<KString> name, NonnullRefPtr<Credentials> credent
         protected_data.credentials = move(credentials);
     });
 
-    dbgln_if(PROCESS_DEBUG, "Created new process {}({})", m_name, this->pid().value());
+    if constexpr (PROCESS_DEBUG) {
+        this->name().with([&](auto& process_name) {
+            dbgln("Created new process {}({})", process_name->view(), this->pid().value());
+        });
+    }
 }
 
 ErrorOr<void> Process::attach_resources(NonnullOwnPtr<Memory::AddressSpace>&& preallocated_space, LockRefPtr<Thread>& first_thread, Process* fork_parent)
@@ -358,9 +362,6 @@ ErrorOr<void> Process::attach_resources(NonnullOwnPtr<Memory::AddressSpace>&& pr
         // FIXME: Figure out if this is really necessary.
         first_thread->detach();
     }
-
-    auto weak_ptr = TRY(this->try_make_weak_ptr());
-    m_procfs_traits = TRY(ProcessProcFSTraits::try_create({}, move(weak_ptr)));
 
     // This is not actually explicitly verified by any official documentation,
     // but it's not listed anywhere as being cleared, and rsync expects it to work like this.
@@ -452,10 +453,12 @@ void create_signal_trampoline()
     g_signal_trampoline_region->remap();
 }
 
-void Process::crash(int signal, FlatPtr ip, bool out_of_memory)
+void Process::crash(int signal, Optional<RegisterState const&> regs, bool out_of_memory)
 {
     VERIFY(!is_dead());
     VERIFY(&Process::current() == this);
+
+    auto ip = regs.has_value() ? regs->ip() : 0;
 
     if (out_of_memory) {
         dbgln("\033[31;1mOut of memory\033[m, killing: {}", *this);
@@ -466,6 +469,20 @@ void Process::crash(int signal, FlatPtr ip, bool out_of_memory)
         } else {
             dbgln("\033[31;1m{:p}  (?)\033[0m\n", ip);
         }
+#if ARCH(X86_64)
+        constexpr bool userspace_backtrace = false;
+#elif ARCH(AARCH64)
+        constexpr bool userspace_backtrace = true;
+#else
+#    error "Unknown architecture"
+#endif
+        if constexpr (userspace_backtrace) {
+            dbgln("Userspace backtrace:");
+            auto bp = regs.has_value() ? regs->bp() : 0;
+            dump_backtrace_from_base_pointer(bp);
+        }
+
+        dbgln("Kernel backtrace:");
         dump_backtrace();
     }
     with_mutable_protected_data([&](auto& protected_data) {
@@ -553,13 +570,13 @@ Process::OpenFileDescriptionAndFlags& Process::OpenFileDescriptions::at(size_t i
     return m_fds_metadatas[i];
 }
 
-ErrorOr<NonnullLockRefPtr<OpenFileDescription>> Process::OpenFileDescriptions::open_file_description(int fd) const
+ErrorOr<NonnullRefPtr<OpenFileDescription>> Process::OpenFileDescriptions::open_file_description(int fd) const
 {
     if (fd < 0)
         return EBADF;
     if (static_cast<size_t>(fd) >= m_fds_metadatas.size())
         return EBADF;
-    LockRefPtr description = m_fds_metadatas[fd].description();
+    RefPtr description = m_fds_metadatas[fd].description();
     if (!description)
         return EBADF;
     return description.release_nonnull();
@@ -671,7 +688,9 @@ ErrorOr<void> Process::dump_core()
         dbgln("Generating coredump for pid {} failed because coredump directory was not set.", pid().value());
         return {};
     }
-    auto coredump_path = TRY(KString::formatted("{}/{}_{}_{}", coredump_directory_path->view(), name(), pid().value(), kgettimeofday().to_truncated_seconds()));
+    auto coredump_path = TRY(name().with([&](auto& process_name) {
+        return KString::formatted("{}/{}_{}_{}", coredump_directory_path->view(), process_name->view(), pid().value(), kgettimeofday().to_truncated_seconds());
+    }));
     auto coredump = TRY(Coredump::try_create(*this, coredump_path->view()));
     return coredump->write();
 }
@@ -683,12 +702,14 @@ ErrorOr<void> Process::dump_perfcore()
     dbgln("Generating perfcore for pid: {}", pid().value());
 
     // Try to generate a filename which isn't already used.
-    auto base_filename = TRY(KString::formatted("{}_{}", name(), pid().value()));
+    auto base_filename = TRY(name().with([&](auto& process_name) {
+        return KString::formatted("{}_{}", process_name->view(), pid().value());
+    }));
     auto perfcore_filename = TRY(KString::formatted("{}.profile", base_filename));
-    LockRefPtr<OpenFileDescription> description;
+    RefPtr<OpenFileDescription> description;
     auto credentials = this->credentials();
     for (size_t attempt = 1; attempt <= 10; ++attempt) {
-        auto description_or_error = VirtualFileSystem::the().open(credentials, perfcore_filename->view(), O_CREAT | O_EXCL, 0400, current_directory(), UidAndGid { 0, 0 });
+        auto description_or_error = VirtualFileSystem::the().open(*this, credentials, perfcore_filename->view(), O_CREAT | O_EXCL, 0400, current_directory(), UidAndGid { 0, 0 });
         if (!description_or_error.is_error()) {
             description = description_or_error.release_value();
             break;
@@ -721,8 +742,11 @@ void Process::finalize()
 
     dbgln_if(PROCESS_DEBUG, "Finalizing process {}", *this);
 
-    if (veil_state() == VeilState::Dropped)
-        dbgln("\x1b[01;31mProcess '{}' exited with the veil left open\x1b[0m", name());
+    if (veil_state() == VeilState::Dropped) {
+        name().with([&](auto& process_name) {
+            dbgln("\x1b[01;31mProcess '{}' exited with the veil left open\x1b[0m", process_name->view());
+        });
+    }
 
     if (g_init_pid != 0 && pid() == g_init_pid)
         PANIC("Init process quit unexpectedly. Exit code: {}", termination_status());
@@ -831,11 +855,20 @@ void Process::die()
             auto& process = *it;
             ++it;
             if (process.has_tracee_thread(pid())) {
-                dbgln_if(PROCESS_DEBUG, "Process {} ({}) is attached by {} ({}) which will exit", process.name(), process.pid(), name(), pid());
+                if constexpr (PROCESS_DEBUG) {
+                    process.name().with([&](auto& process_name) {
+                        name().with([&](auto& name) {
+                            dbgln("Process {} ({}) is attached by {} ({}) which will exit", process_name->view(), process.pid(), name->view(), pid());
+                        });
+                    });
+                }
                 process.stop_tracing();
                 auto err = process.send_signal(SIGSTOP, this);
-                if (err.is_error())
-                    dbgln("Failed to send the SIGSTOP signal to {} ({})", process.name(), process.pid());
+                if (err.is_error()) {
+                    process.name().with([&](auto& process_name) {
+                        dbgln("Failed to send the SIGSTOP signal to {} ({})", process_name->view(), process.pid());
+                    });
+                }
             }
         }
     });
@@ -908,14 +941,12 @@ LockRefPtr<Thread> Process::create_kernel_thread(void (*entry)(void*), void* ent
 
 void Process::OpenFileDescriptionAndFlags::clear()
 {
-    // FIXME: Verify Process::m_fds_lock is locked!
     m_description = nullptr;
     m_flags = 0;
 }
 
-void Process::OpenFileDescriptionAndFlags::set(NonnullLockRefPtr<OpenFileDescription>&& description, u32 flags)
+void Process::OpenFileDescriptionAndFlags::set(NonnullRefPtr<OpenFileDescription> description, u32 flags)
 {
-    // FIXME: Verify Process::m_fds_lock is locked!
     m_description = move(description);
     m_flags = flags;
 }
@@ -982,13 +1013,6 @@ bool Process::add_thread(Thread& thread)
         });
     });
     return is_first;
-}
-
-void Process::set_dumpable(bool dumpable)
-{
-    with_mutable_protected_data([&](auto& protected_data) {
-        protected_data.dumpable = dumpable;
-    });
 }
 
 ErrorOr<void> Process::set_coredump_property(NonnullOwnPtr<KString> key, NonnullOwnPtr<KString> value)
@@ -1075,6 +1099,18 @@ ErrorOr<NonnullRefPtr<Custody>> Process::custody_for_dirfd(int dirfd)
     if (!base_description->custody())
         return EINVAL;
     return *base_description->custody();
+}
+
+SpinlockProtected<NonnullOwnPtr<KString>, LockRank::None> const& Process::name() const
+{
+    return m_name;
+}
+
+void Process::set_name(NonnullOwnPtr<KString> name)
+{
+    m_name.with([&](auto& this_name) {
+        this_name = move(name);
+    });
 }
 
 }

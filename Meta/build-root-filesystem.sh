@@ -117,15 +117,24 @@ if [ -f mnt/usr/Tests/Kernel/TestProcFSWrite ]; then
     chmod 4755 mnt/usr/Tests/Kernel/TestProcFSWrite
 fi
 
-chmod 0400 mnt/res/kernel.map
-chmod 0400 mnt/boot/Kernel
-chmod 0400 mnt/boot/Kernel.debug
+if [ -f mnt/res/kernel.map ]; then
+    chmod 0400 mnt/res/kernel.map
+fi
+
+if [ -f mnt/boot/Kernel ]; then
+    chmod 0400 mnt/boot/Kernel
+fi
+
+if [ -f mnt/boot/Kernel.debug ]; then
+    chmod 0400 mnt/boot/Kernel.debug
+fi
+
 chmod 600 mnt/etc/shadow
 chmod 755 mnt/res/devel/templates/*.postcreate
 echo "done"
 
 printf "creating initial filesystem structure... "
-for dir in bin etc proc mnt tmp boot mod var/run usr/local; do
+for dir in bin etc proc mnt tmp boot mod var/run usr/local usr/bin; do
     mkdir -p mnt/$dir
 done
 chmod 700 mnt/boot
@@ -191,6 +200,8 @@ echo "done"
 printf "installing shortcuts... "
 ln -sf Shell mnt/bin/sh
 ln -sf test mnt/bin/[
+ln -sf less mnt/bin/more
+ln -sf /bin/env mnt/usr/bin/env
 echo "done"
 
 printf "installing 'checksum' variants... "

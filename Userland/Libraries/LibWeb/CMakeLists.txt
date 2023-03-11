@@ -6,7 +6,6 @@ set(SOURCES
     ARIA/Roles.cpp
     Bindings/AudioConstructor.cpp
     Bindings/CSSNamespace.cpp
-    Bindings/FetchMethod.cpp
     Bindings/HostDefined.cpp
     Bindings/ImageConstructor.cpp
     Bindings/Intrinsics.cpp
@@ -15,8 +14,6 @@ set(SOURCES
     Bindings/MainThreadVM.cpp
     Bindings/OptionConstructor.cpp
     Bindings/PlatformObject.cpp
-    Bindings/WindowConstructor.cpp
-    Bindings/WindowPrototype.cpp
     Crypto/Crypto.cpp
     Crypto/SubtleCrypto.cpp
     CSS/Angle.cpp
@@ -157,6 +154,8 @@ set(SOURCES
     FileAPI/File.cpp
     FileAPI/FileList.cpp
     FontCache.cpp
+    Geometry/DOMMatrix.cpp
+    Geometry/DOMMatrixReadOnly.cpp
     Geometry/DOMPoint.cpp
     Geometry/DOMPointReadOnly.cpp
     Geometry/DOMRect.cpp
@@ -170,6 +169,7 @@ set(SOURCES
     HTML/Canvas/CanvasPath.cpp
     HTML/Canvas/CanvasState.cpp
     HTML/CanvasGradient.cpp
+    HTML/CanvasPattern.cpp
     HTML/CanvasRenderingContext2D.cpp
     HTML/CloseEvent.cpp
     HTML/CrossOrigin/AbstractOperations.cpp
@@ -184,6 +184,8 @@ set(SOURCES
     HTML/EventNames.cpp
     HTML/Focus.cpp
     HTML/FormAssociatedElement.cpp
+    HTML/FormControlInfrastructure.cpp
+    HTML/FormDataEvent.cpp
     HTML/GlobalEventHandlers.cpp
     HTML/History.cpp
     HTML/HTMLAnchorElement.cpp
@@ -265,6 +267,8 @@ set(SOURCES
     HTML/MessageChannel.cpp
     HTML/MessageEvent.cpp
     HTML/MessagePort.cpp
+    HTML/MimeType.cpp
+    HTML/MimeTypeArray.cpp
     HTML/Navigator.cpp
     HTML/NavigatorID.cpp
     HTML/PageTransitionEvent.cpp
@@ -276,6 +280,8 @@ set(SOURCES
     HTML/Parser/ListOfActiveFormattingElements.cpp
     HTML/Parser/StackOfOpenElements.cpp
     HTML/Path2D.cpp
+    HTML/Plugin.cpp
+    HTML/PluginArray.cpp
     HTML/PromiseRejectionEvent.cpp
     HTML/Scripting/ClassicScript.cpp
     HTML/Scripting/Environments.cpp
@@ -294,6 +300,7 @@ set(SOURCES
     HTML/Timer.cpp
     HTML/Window.cpp
     HTML/WindowEventHandlers.cpp
+    HTML/WindowOrWorkerGlobalScope.cpp
     HTML/WindowProxy.cpp
     HTML/Worker.cpp
     HTML/WorkerDebugConsoleClient.cpp
@@ -321,7 +328,7 @@ set(SOURCES
     Layout/FrameBox.cpp
     Layout/GridFormattingContext.cpp
     Layout/ImageBox.cpp
-    Layout/InitialContainingBlock.cpp
+    Layout/Viewport.cpp
     Layout/InlineFormattingContext.cpp
     Layout/InlineLevelIterator.cpp
     Layout/InlineNode.cpp
@@ -465,9 +472,12 @@ set(SOURCES
     WebIDL/Promise.cpp
     WebSockets/WebSocket.cpp
     XHR/EventNames.cpp
+    XHR/FormData.cpp
+    XHR/FormDataIterator.cpp
     XHR/ProgressEvent.cpp
     XHR/XMLHttpRequest.cpp
     XHR/XMLHttpRequestEventTarget.cpp
+    XHR/XMLHttpRequestUpload.cpp
     XML/XMLDocumentBuilder.cpp
 )
 

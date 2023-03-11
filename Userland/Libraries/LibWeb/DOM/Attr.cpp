@@ -13,9 +13,14 @@
 
 namespace Web::DOM {
 
-JS::NonnullGCPtr<Attr> Attr::create(Document& document, DeprecatedFlyString local_name, DeprecatedString value, Element const* owner_element)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Attr>> Attr::create(Document& document, DeprecatedFlyString local_name, DeprecatedString value, Element const* owner_element)
 {
-    return document.heap().allocate<Attr>(document.realm(), document, QualifiedName(move(local_name), {}, {}), move(value), owner_element).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(document.heap().allocate<Attr>(document.realm(), document, QualifiedName(move(local_name), {}, {}), move(value), owner_element));
+}
+
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Attr>> Attr::create(Document& document, QualifiedName qualified_name, DeprecatedString value, Element const* owner_element)
+{
+    return MUST_OR_THROW_OOM(document.heap().allocate<Attr>(document.realm(), document, move(qualified_name), move(value), owner_element));
 }
 
 JS::NonnullGCPtr<Attr> Attr::clone(Document& document)
@@ -43,11 +48,6 @@ void Attr::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_owner_element.ptr());
-}
-
-Element* Attr::owner_element()
-{
-    return m_owner_element.ptr();
 }
 
 Element const* Attr::owner_element() const
@@ -79,10 +79,12 @@ void Attr::set_value(DeprecatedString value)
 }
 
 // https://dom.spec.whatwg.org/#handle-attribute-changes
-void Attr::handle_attribute_changes(Element& element, DeprecatedString const& old_value, [[maybe_unused]] DeprecatedString const& new_value)
+void Attr::handle_attribute_changes(Element const& element, DeprecatedString const& old_value, [[maybe_unused]] DeprecatedString const& new_value)
 {
     // 1. Queue a mutation record of "attributes" for element with attribute’s local name, attribute’s namespace, oldValue, « », « », null, and null.
-    element.queue_mutation_record(MutationType::attributes, local_name(), namespace_uri(), old_value, StaticNodeList::create(realm(), {}), StaticNodeList::create(realm(), {}), nullptr, nullptr);
+    auto added_node_list = StaticNodeList::create(realm(), {}).release_value_but_fixme_should_propagate_errors();
+    auto removed_node_list = StaticNodeList::create(realm(), {}).release_value_but_fixme_should_propagate_errors();
+    element.queue_mutation_record(MutationType::attributes, local_name(), namespace_uri(), old_value, added_node_list, removed_node_list, nullptr, nullptr);
 
     // FIXME: 2. If element is custom, then enqueue a custom element callback reaction with element, callback name "attributeChangedCallback", and an argument list containing attribute’s local name, oldValue, newValue, and attribute’s namespace.
 

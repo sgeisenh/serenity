@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Srimanta Barua <srimanta.barua1@gmail.com>
- * Copyright (c) 2021-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -14,6 +14,7 @@
 #include <LibGfx/Font/OpenType/Font.h>
 #include <LibGfx/Font/OpenType/Glyf.h>
 #include <LibGfx/Font/OpenType/Tables.h>
+#include <LibGfx/PNGLoader.h>
 #include <LibTextCodec/Decoder.h>
 #include <math.h>
 #include <sys/mman.h>
@@ -274,7 +275,7 @@ Optional<i16> Kern::read_glyph_kerning_format0(ReadonlyBytes slice, u16 left_gly
         return {};
 
     // FIXME: implement a possibly slightly more efficient binary search using the parameters above
-    Span<Format0Pair const> pairs { bit_cast<Format0Pair const*>(slice.slice(sizeof(Format0)).data()), number_of_pairs };
+    ReadonlySpan<Format0Pair> pairs { bit_cast<Format0Pair const*>(slice.slice(sizeof(Format0)).data()), number_of_pairs };
 
     // The left and right halves of the kerning pair make an unsigned 32-bit number, which is then used to order the kerning pairs numerically.
     auto needle = (static_cast<u32>(left_glyph_id) << 16u) | static_cast<u32>(right_glyph_id);
@@ -321,8 +322,8 @@ DeprecatedString Name::string_for_id(NameId id) const
     auto const offset = name_record.string_offset;
 
     if (platform_id == to_underlying(Platform::Windows)) {
-        static auto& decoder = *TextCodec::decoder_for("utf-16be");
-        return decoder.to_utf8(StringView { (char const*)m_slice.offset_pointer(storage_offset + offset), length });
+        static auto& decoder = *TextCodec::decoder_for("utf-16be"sv);
+        return decoder.to_utf8(StringView { (char const*)m_slice.offset_pointer(storage_offset + offset), length }).release_value_but_fixme_should_propagate_errors().to_deprecated_string();
     }
 
     return DeprecatedString((char const*)m_slice.offset_pointer(storage_offset + offset), length);
@@ -405,11 +406,12 @@ ErrorOr<NonnullRefPtr<Font>> Font::try_load_from_offset(ReadonlyBytes buffer, u3
     Optional<Maxp> opt_maxp = {};
     Optional<Hmtx> opt_hmtx = {};
     Optional<Cmap> opt_cmap = {};
-    Optional<Loca> opt_loca = {};
     Optional<OS2> opt_os2 = {};
     Optional<Kern> opt_kern = {};
     Optional<Fpgm> opt_fpgm = {};
     Optional<Prep> opt_prep = {};
+    Optional<CBLC> cblc;
+    Optional<CBDT> cbdt;
 
     auto num_tables = be_u16(buffer.offset_pointer(offset + (u32)Offsets::NumTables));
     if (buffer.size() < offset + (u32)Sizes::OffsetTable + num_tables * (u32)Sizes::TableRecord)
@@ -454,6 +456,10 @@ ErrorOr<NonnullRefPtr<Font>> Font::try_load_from_offset(ReadonlyBytes buffer, u3
             opt_fpgm_slice = buffer_here;
         } else if (tag == tag_from_str("prep")) {
             opt_prep_slice = buffer_here;
+        } else if (tag == tag_from_str("CBLC")) {
+            cblc = TRY(CBLC::from_slice(buffer_here));
+        } else if (tag == tag_from_str("CBDT")) {
+            cbdt = TRY(CBDT::from_slice(buffer_here));
         }
     }
 
@@ -481,13 +487,17 @@ ErrorOr<NonnullRefPtr<Font>> Font::try_load_from_offset(ReadonlyBytes buffer, u3
         return Error::from_string_literal("Could not load Cmap");
     auto cmap = opt_cmap.value();
 
-    if (!opt_loca_slice.has_value() || !(opt_loca = Loca::from_slice(opt_loca_slice.value(), maxp.num_glyphs(), head.index_to_loc_format())).has_value())
-        return Error::from_string_literal("Could not load Loca");
-    auto loca = opt_loca.value();
+    Optional<Loca> loca;
+    if (opt_loca_slice.has_value()) {
+        loca = Loca::from_slice(opt_loca_slice.value(), maxp.num_glyphs(), head.index_to_loc_format());
+        if (!loca.has_value())
+            return Error::from_string_literal("Could not load Loca");
+    }
 
-    if (!opt_glyf_slice.has_value())
-        return Error::from_string_literal("Could not load Glyf");
-    auto glyf = Glyf(opt_glyf_slice.value());
+    Optional<Glyf> glyf;
+    if (opt_glyf_slice.has_value()) {
+        glyf = Glyf(opt_glyf_slice.value());
+    }
 
     Optional<OS2> os2;
     if (opt_os2_slice.has_value())
@@ -534,7 +544,22 @@ ErrorOr<NonnullRefPtr<Font>> Font::try_load_from_offset(ReadonlyBytes buffer, u3
         }
     }
 
-    return adopt_ref(*new Font(move(buffer), move(head), move(name), move(hhea), move(maxp), move(hmtx), move(cmap), move(loca), move(glyf), move(os2), move(kern), move(fpgm), move(prep)));
+    return adopt_ref(*new Font(
+        move(buffer),
+        move(head),
+        move(name),
+        move(hhea),
+        move(maxp),
+        move(hmtx),
+        move(cmap),
+        move(loca),
+        move(glyf),
+        move(os2),
+        move(kern),
+        move(fpgm),
+        move(prep),
+        move(cblc),
+        move(cbdt)));
 }
 
 Gfx::ScaledFontMetrics Font::metrics([[maybe_unused]] float x_scale, float y_scale) const
@@ -560,15 +585,78 @@ Gfx::ScaledFontMetrics Font::metrics([[maybe_unused]] float x_scale, float y_sca
     };
 }
 
-// FIXME: "loca" and "glyf" are not available for CFF fonts.
-Gfx::ScaledGlyphMetrics Font::glyph_metrics(u32 glyph_id, float x_scale, float y_scale) const
+Font::EmbeddedBitmapData Font::embedded_bitmap_data_for_glyph(u32 glyph_id) const
 {
+    if (!has_color_bitmaps())
+        return Empty {};
+
+    u16 first_glyph_index {};
+    u16 last_glyph_index {};
+    auto maybe_index_subtable = m_cblc->index_subtable_for_glyph_id(glyph_id, first_glyph_index, last_glyph_index);
+    if (!maybe_index_subtable.has_value())
+        return Empty {};
+
+    auto const& index_subtable = maybe_index_subtable.value();
+    auto const& bitmap_size = m_cblc->bitmap_size_for_glyph_id(glyph_id).value();
+
+    if (index_subtable.index_format == 1) {
+        auto const& index_subtable1 = *bit_cast<EBLC::IndexSubTable1 const*>(&index_subtable);
+        size_t size_of_array = (last_glyph_index - first_glyph_index + 1) + 1;
+        auto sbit_offsets = ReadonlySpan<Offset32> { index_subtable1.sbit_offsets, size_of_array };
+        auto sbit_offset = sbit_offsets[glyph_id - first_glyph_index];
+        size_t glyph_data_offset = sbit_offset + index_subtable.image_data_offset;
+
+        if (index_subtable.image_format == 17) {
+            return EmbeddedBitmapWithFormat17 {
+                .bitmap_size = bitmap_size,
+                .format17 = *bit_cast<CBDT::Format17 const*>(m_cbdt->bytes().slice(glyph_data_offset, size_of_array).data()),
+            };
+        }
+        dbgln("FIXME: Implement OpenType embedded bitmap image format {}", index_subtable.image_format);
+    } else {
+        dbgln("FIXME: Implement OpenType embedded bitmap index format {}", index_subtable.index_format);
+    }
+
+    return Empty {};
+}
+
+Gfx::ScaledGlyphMetrics Font::glyph_metrics(u32 glyph_id, float x_scale, float y_scale, float point_width, float point_height) const
+{
+    auto embedded_bitmap_metrics = embedded_bitmap_data_for_glyph(glyph_id).visit(
+        [&](EmbeddedBitmapWithFormat17 const& data) -> Optional<Gfx::ScaledGlyphMetrics> {
+            // FIXME: This is a pretty ugly hack to work out new scale factors based on the relationship between
+            //        the pixels-per-em values and the font point size. It appears that bitmaps are not in the same
+            //        coordinate space as the head table's "units per em" value.
+            //        There's definitely some cleaner way to do this.
+            float x_scale = (point_width * 1.3333333f) / static_cast<float>(data.bitmap_size.ppem_x);
+            float y_scale = (point_height * 1.3333333f) / static_cast<float>(data.bitmap_size.ppem_y);
+
+            return Gfx::ScaledGlyphMetrics {
+                .ascender = static_cast<float>(data.bitmap_size.hori.ascender) * y_scale,
+                .descender = static_cast<float>(data.bitmap_size.hori.descender) * y_scale,
+                .advance_width = static_cast<float>(data.format17.glyph_metrics.advance) * x_scale,
+                .left_side_bearing = static_cast<float>(data.format17.glyph_metrics.bearing_x) * x_scale,
+            };
+        },
+        [&](Empty) -> Optional<Gfx::ScaledGlyphMetrics> {
+            // Unsupported format or no embedded bitmap for this glyph ID.
+            return {};
+        });
+
+    if (embedded_bitmap_metrics.has_value()) {
+        return embedded_bitmap_metrics.release_value();
+    }
+
+    if (!m_loca.has_value() || !m_glyf.has_value()) {
+        return Gfx::ScaledGlyphMetrics {};
+    }
+
     if (glyph_id >= glyph_count()) {
         glyph_id = 0;
     }
     auto horizontal_metrics = m_hmtx.get_glyph_horizontal_metrics(glyph_id);
-    auto glyph_offset = m_loca.get_glyph_offset(glyph_id);
-    auto glyph = m_glyf.glyph(glyph_offset);
+    auto glyph_offset = m_loca->get_glyph_offset(glyph_id);
+    auto glyph = m_glyf->glyph(glyph_offset);
     return Gfx::ScaledGlyphMetrics {
         .ascender = static_cast<float>(glyph.ascender()) * y_scale,
         .descender = static_cast<float>(glyph.descender()) * y_scale,
@@ -584,14 +672,21 @@ float Font::glyphs_horizontal_kerning(u32 left_glyph_id, u32 right_glyph_id, flo
     return m_kern->get_glyph_kerning(left_glyph_id, right_glyph_id) * x_scale;
 }
 
-// FIXME: "loca" and "glyf" are not available for CFF fonts.
 RefPtr<Gfx::Bitmap> Font::rasterize_glyph(u32 glyph_id, float x_scale, float y_scale, Gfx::GlyphSubpixelOffset subpixel_offset) const
 {
+    if (auto bitmap = color_bitmap(glyph_id)) {
+        return bitmap;
+    }
+
+    if (!m_loca.has_value() || !m_glyf.has_value()) {
+        return nullptr;
+    }
+
     if (glyph_id >= glyph_count()) {
         glyph_id = 0;
     }
-    auto glyph_offset = m_loca.get_glyph_offset(glyph_id);
-    auto glyph = m_glyf.glyph(glyph_offset);
+    auto glyph_offset = m_loca->get_glyph_offset(glyph_id);
+    auto glyph = m_glyf->glyph(glyph_offset);
 
     i16 ascender = 0;
     i16 descender = 0;
@@ -608,8 +703,8 @@ RefPtr<Gfx::Bitmap> Font::rasterize_glyph(u32 glyph_id, float x_scale, float y_s
         if (glyph_id >= glyph_count()) {
             glyph_id = 0;
         }
-        auto glyph_offset = m_loca.get_glyph_offset(glyph_id);
-        return m_glyf.glyph(glyph_offset);
+        auto glyph_offset = m_loca->get_glyph_offset(glyph_id);
+        return m_glyf->glyph(glyph_offset);
     });
 }
 
@@ -650,6 +745,15 @@ u16 Font::weight() const
     return 400;
 }
 
+u16 Font::width() const
+{
+    if (m_os2.has_value()) {
+        return m_os2->width_class();
+    }
+
+    return Gfx::FontWidth::Normal;
+}
+
 u8 Font::slope() const
 {
     // https://docs.microsoft.com/en-us/typography/opentype/spec/os2
@@ -672,12 +776,17 @@ bool Font::is_fixed_width() const
 {
     // FIXME: Read this information from the font file itself.
     // FIXME: Although, it appears some application do similar hacks
-    return glyph_metrics(glyph_id_for_code_point('.'), 1, 1).advance_width == glyph_metrics(glyph_id_for_code_point('X'), 1, 1).advance_width;
+    return glyph_metrics(glyph_id_for_code_point('.'), 1, 1, 1, 1).advance_width == glyph_metrics(glyph_id_for_code_point('X'), 1, 1, 1, 1).advance_width;
 }
 
 u16 OS2::weight_class() const
 {
     return header().us_weight_class;
+}
+
+u16 OS2::width_class() const
+{
+    return header().us_width_class;
 }
 
 u16 OS2::selection() const
@@ -721,8 +830,12 @@ Optional<ReadonlyBytes> Font::control_value_program() const
 
 Optional<ReadonlyBytes> Font::glyph_program(u32 glyph_id) const
 {
-    auto glyph_offset = m_loca.get_glyph_offset(glyph_id);
-    auto glyph = m_glyf.glyph(glyph_offset);
+    if (!m_loca.has_value() || !m_glyf.has_value()) {
+        return {};
+    }
+
+    auto glyph_offset = m_loca->get_glyph_offset(glyph_id);
+    auto glyph = m_glyf->glyph(glyph_offset);
     return glyph.program();
 }
 
@@ -760,4 +873,103 @@ void Font::populate_glyph_page(GlyphPage& glyph_page, size_t page_index) const
     }
 }
 
+ErrorOr<CBLC> CBLC::from_slice(ReadonlyBytes slice)
+{
+    if (slice.size() < sizeof(CblcHeader))
+        return Error::from_string_literal("CBLC table too small");
+    auto const& header = *bit_cast<CblcHeader const*>(slice.data());
+
+    size_t num_sizes = header.num_sizes;
+    Checked<size_t> size_used_by_bitmap_sizes = num_sizes;
+    size_used_by_bitmap_sizes *= sizeof(BitmapSize);
+    if (size_used_by_bitmap_sizes.has_overflow())
+        return Error::from_string_literal("Integer overflow in CBLC table");
+
+    Checked<size_t> total_size = sizeof(CblcHeader);
+    total_size += size_used_by_bitmap_sizes;
+    if (total_size.has_overflow())
+        return Error::from_string_literal("Integer overflow in CBLC table");
+
+    if (slice.size() < total_size)
+        return Error::from_string_literal("CBLC table too small");
+
+    return CBLC { slice };
+}
+
+Optional<CBLC::BitmapSize const&> CBLC::bitmap_size_for_glyph_id(u32 glyph_id) const
+{
+    for (auto const& bitmap_size : this->bitmap_sizes()) {
+        if (glyph_id >= bitmap_size.start_glyph_index && glyph_id <= bitmap_size.end_glyph_index) {
+            return bitmap_size;
+        }
+    }
+    return {};
+}
+
+ErrorOr<CBDT> CBDT::from_slice(ReadonlyBytes slice)
+{
+    if (slice.size() < sizeof(CbdtHeader))
+        return Error::from_string_literal("CBDT table too small");
+    return CBDT { slice };
+}
+
+bool Font::has_color_bitmaps() const
+{
+    return m_cblc.has_value() && m_cbdt.has_value();
+}
+
+Optional<EBLC::IndexSubHeader const&> CBLC::index_subtable_for_glyph_id(u32 glyph_id, u16& first_glyph_index, u16& last_glyph_index) const
+{
+    auto maybe_bitmap_size = bitmap_size_for_glyph_id(glyph_id);
+    if (!maybe_bitmap_size.has_value()) {
+        return {};
+    }
+    auto const& bitmap_size = maybe_bitmap_size.value();
+
+    Checked<size_t> required_size = static_cast<u32>(bitmap_size.index_subtable_array_offset);
+    required_size += bitmap_size.index_tables_size;
+
+    if (m_slice.size() < required_size) {
+        dbgln("CBLC index subtable array goes out of bounds");
+        return {};
+    }
+
+    auto index_subtables_slice = m_slice.slice(bitmap_size.index_subtable_array_offset, bitmap_size.index_tables_size);
+    ReadonlySpan<EBLC::IndexSubTableArray> index_subtable_arrays {
+        bit_cast<EBLC::IndexSubTableArray const*>(index_subtables_slice.data()), bitmap_size.number_of_index_subtables
+    };
+
+    EBLC::IndexSubTableArray const* index_subtable_array = nullptr;
+    for (auto const& array : index_subtable_arrays) {
+        if (glyph_id >= array.first_glyph_index && glyph_id <= array.last_glyph_index)
+            index_subtable_array = &array;
+    }
+    if (!index_subtable_array) {
+        return {};
+    }
+
+    auto index_subtable_slice = m_slice.slice(bitmap_size.index_subtable_array_offset + index_subtable_array->additional_offset_to_index_subtable);
+    first_glyph_index = index_subtable_array->first_glyph_index;
+    last_glyph_index = index_subtable_array->last_glyph_index;
+    return *bit_cast<EBLC::IndexSubHeader const*>(index_subtable_slice.data());
+}
+
+RefPtr<Gfx::Bitmap> Font::color_bitmap(u32 glyph_id) const
+{
+    return embedded_bitmap_data_for_glyph(glyph_id).visit(
+        [&](EmbeddedBitmapWithFormat17 const& data) -> RefPtr<Gfx::Bitmap> {
+            auto data_slice = ReadonlyBytes { data.format17.data, static_cast<u32>(data.format17.data_len) };
+            auto decoder = Gfx::PNGImageDecoderPlugin::create(data_slice).release_value_but_fixme_should_propagate_errors();
+            auto frame = decoder->frame(0);
+            if (frame.is_error()) {
+                dbgln("PNG decode failed");
+                return nullptr;
+            }
+            return frame.value().image;
+        },
+        [&](Empty) -> RefPtr<Gfx::Bitmap> {
+            // Unsupported format or no image for this glyph ID.
+            return nullptr;
+        });
+}
 }

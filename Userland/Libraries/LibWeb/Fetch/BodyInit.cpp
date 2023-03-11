@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2022-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2022, Kenneth Myhra <kennethmyhra@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -75,7 +75,7 @@ WebIDL::ExceptionOr<Infrastructure::BodyWithType> extract_body(JS::Realm& realm,
             length = blob->size();
             // If object’s type attribute is not the empty byte sequence, set type to its value.
             if (!blob->type().is_empty())
-                type = blob->type().to_byte_buffer();
+                type = TRY_OR_THROW_OOM(vm, ByteBuffer::copy(blob->type().bytes()));
             return {};
         },
         [&](ReadonlyBytes bytes) -> WebIDL::ExceptionOr<void> {
@@ -90,15 +90,16 @@ WebIDL::ExceptionOr<Infrastructure::BodyWithType> extract_body(JS::Realm& realm,
         },
         [&](JS::Handle<URL::URLSearchParams> const& url_search_params) -> WebIDL::ExceptionOr<void> {
             // Set source to the result of running the application/x-www-form-urlencoded serializer with object’s list.
-            source = url_search_params->to_deprecated_string().to_byte_buffer();
+            auto search_params_bytes = TRY(url_search_params->to_string()).bytes();
+            source = TRY_OR_THROW_OOM(vm, ByteBuffer::copy(search_params_bytes));
             // Set type to `application/x-www-form-urlencoded;charset=UTF-8`.
             type = TRY_OR_THROW_OOM(vm, ByteBuffer::copy("application/x-www-form-urlencoded;charset=UTF-8"sv.bytes()));
             return {};
         },
-        [&](DeprecatedString const& scalar_value_string) -> WebIDL::ExceptionOr<void> {
-            // NOTE: AK::DeprecatedString is always UTF-8.
+        [&](String const& scalar_value_string) -> WebIDL::ExceptionOr<void> {
+            // NOTE: AK::String is always UTF-8.
             // Set source to the UTF-8 encoding of object.
-            source = scalar_value_string.to_byte_buffer();
+            source = TRY_OR_THROW_OOM(vm, ByteBuffer::copy(scalar_value_string.bytes()));
             // Set type to `text/plain;charset=UTF-8`.
             type = TRY_OR_THROW_OOM(vm, ByteBuffer::copy("text/plain;charset=UTF-8"sv.bytes()));
             return {};
@@ -116,6 +117,10 @@ WebIDL::ExceptionOr<Infrastructure::BodyWithType> extract_body(JS::Realm& realm,
         }));
 
     // FIXME: 11. If source is a byte sequence, then set action to a step that returns source and length to source’s length.
+    // For now, do it synchronously.
+    if (source.has<ByteBuffer>())
+        length = source.get<ByteBuffer>().size();
+
     // FIXME: 12. If action is non-null, then run these steps in parallel:
 
     // 13. Let body be a body whose stream is stream, source is source, and length is length.

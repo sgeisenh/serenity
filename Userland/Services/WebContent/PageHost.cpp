@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -12,7 +12,7 @@
 #include <LibGfx/SystemTheme.h>
 #include <LibWeb/Cookie/ParsedCookie.h>
 #include <LibWeb/HTML/BrowsingContext.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
+#include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Painting/PaintableBox.h>
 #include <LibWeb/Platform/Timer.h>
 #include <WebContent/WebContentClientEndpoint.h>
@@ -60,7 +60,7 @@ Gfx::Palette PageHost::palette() const
     return Gfx::Palette(*m_palette_impl);
 }
 
-void PageHost::set_palette_impl(Gfx::PaletteImpl const& impl)
+void PageHost::set_palette_impl(Gfx::PaletteImpl& impl)
 {
     m_palette_impl = impl;
     if (auto* document = page().top_level_browsing_context().active_document())
@@ -96,7 +96,7 @@ ErrorOr<void> PageHost::connect_to_webdriver(DeprecatedString const& webdriver_i
     return {};
 }
 
-Web::Layout::InitialContainingBlock* PageHost::layout_root()
+Web::Layout::Viewport* PageHost::layout_root()
 {
     auto* document = page().top_level_browsing_context().active_document();
     if (!document)
@@ -371,6 +371,11 @@ void PageHost::page_did_update_cookie(Web::Cookie::Cookie cookie)
 void PageHost::page_did_update_resource_count(i32 count_waiting)
 {
     m_client.async_did_update_resource_count(count_waiting);
+}
+
+void PageHost::page_did_close_browsing_context(Web::HTML::BrowsingContext const&)
+{
+    m_client.async_did_close_browsing_context();
 }
 
 void PageHost::request_file(Web::FileRequest file_request)

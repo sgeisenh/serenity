@@ -10,8 +10,8 @@
 #include <AK/NumberFormat.h>
 #include <AK/QuickSort.h>
 #include <AK/StringBuilder.h>
+#include <LibCore/DeprecatedFile.h>
 #include <LibCore/DirIterator.h>
-#include <LibCore/File.h>
 #include <LibCore/StandardPaths.h>
 #include <LibGUI/AbstractView.h>
 #include <LibGUI/FileIconProvider.h>
@@ -33,7 +33,7 @@ ModelIndex FileSystemModel::Node::index(int column) const
     if (!m_parent)
         return {};
     for (size_t row = 0; row < m_parent->m_children.size(); ++row) {
-        if (&m_parent->m_children[row] == this)
+        if (m_parent->m_children[row] == this)
             return m_model.create_index(row, column, const_cast<Node*>(this));
     }
     VERIFY_NOT_REACHED();
@@ -61,7 +61,7 @@ bool FileSystemModel::Node::fetch_data(DeprecatedString const& full_path, bool i
     mtime = st.st_mtime;
 
     if (S_ISLNK(mode)) {
-        auto sym_link_target_or_error = Core::File::read_link(full_path);
+        auto sym_link_target_or_error = Core::DeprecatedFile::read_link(full_path);
         if (sym_link_target_or_error.is_error())
             perror("readlink");
         else {
@@ -99,8 +99,9 @@ void FileSystemModel::Node::traverse_if_needed()
     auto full_path = this->full_path();
     Core::DirIterator di(full_path, m_model.should_show_dotfiles() ? Core::DirIterator::SkipParentAndBaseDir : Core::DirIterator::SkipDots);
     if (di.has_error()) {
-        m_error = di.error();
-        warnln("DirIterator: {}", di.error_string());
+        auto error = di.error();
+        m_error = error.code();
+        warnln("DirIterator: {}", error);
         return;
     }
 
@@ -110,8 +111,8 @@ void FileSystemModel::Node::traverse_if_needed()
     }
     quick_sort(child_names);
 
-    NonnullOwnPtrVector<Node> directory_children;
-    NonnullOwnPtrVector<Node> file_children;
+    Vector<NonnullOwnPtr<Node>> directory_children;
+    Vector<NonnullOwnPtr<Node>> file_children;
 
     for (auto& child_name : child_names) {
         auto maybe_child = create_child(child_name);
@@ -228,7 +229,7 @@ Optional<FileSystemModel::Node const&> FileSystemModel::node_for_path(Deprecated
         resolved_path = path;
     LexicalPath lexical_path(resolved_path);
 
-    Node const* node = m_root->m_parent_of_root ? &m_root->m_children.first() : m_root;
+    Node const* node = m_root->m_parent_of_root ? m_root->m_children.first() : m_root.ptr();
     if (lexical_path.string() == "/")
         return *node;
 
@@ -237,9 +238,9 @@ Optional<FileSystemModel::Node const&> FileSystemModel::node_for_path(Deprecated
         auto& part = parts[i];
         bool found = false;
         for (auto& child : node->m_children) {
-            if (child.name == part) {
-                const_cast<Node&>(child).reify_if_needed();
-                node = &child;
+            if (child->name == part) {
+                const_cast<Node&>(*child).reify_if_needed();
+                node = child;
                 found = true;
                 if (i == parts.size() - 1)
                     return *node;
@@ -493,7 +494,7 @@ ModelIndex FileSystemModel::index(int row, int column, ModelIndex const& parent)
     const_cast<Node&>(node).reify_if_needed();
     if (static_cast<size_t>(row) >= node.m_children.size())
         return {};
-    return create_index(row, column, &node.m_children[row]);
+    return create_index(row, column, node.m_children[row].ptr());
 }
 
 ModelIndex FileSystemModel::parent_index(ModelIndex const& index) const
@@ -800,9 +801,9 @@ Vector<ModelIndex> FileSystemModel::matches(StringView searching, unsigned flags
     node.reify_if_needed();
     Vector<ModelIndex> found_indices;
     for (auto& child : node.m_children) {
-        if (string_matches(child.name, searching, flags)) {
-            const_cast<Node&>(child).reify_if_needed();
-            found_indices.append(child.index(Column::Name));
+        if (string_matches(child->name, searching, flags)) {
+            const_cast<Node&>(*child).reify_if_needed();
+            found_indices.append(child->index(Column::Name));
             if (flags & FirstMatchOnly)
                 break;
         }

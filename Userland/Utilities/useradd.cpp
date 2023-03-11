@@ -31,7 +31,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio wpath rpath cpath chown"));
 
-    char const* home_path = nullptr;
+    StringView home_path;
     int uid = 0;
     int gid = USERS_GID;
     bool create_home_dir = false;
@@ -53,7 +53,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.parse(arguments);
 
     // Let's run a quick sanity check on username
-    if (strpbrk(username.characters(), "\\/!@#$%^&*()~+=`:\n")) {
+    if (username.find_any_of("\\/!@#$%^&*()~+=`:\n"sv, DeprecatedString::SearchDirection::Forward).has_value()) {
         warnln("invalid character in username, {}", username);
         return 1;
     }
@@ -108,7 +108,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     }
 
     DeprecatedString home;
-    if (!home_path)
+    if (home_path.is_empty())
         home = DeprecatedString::formatted("/home/{}", username);
     else
         home = home_path;

@@ -8,7 +8,7 @@
 #include <AK/HashTable.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/Stream.h>
+#include <LibCore/Socket.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
 #include <arpa/inet.h>
@@ -49,7 +49,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     bool verbose = false;
     bool should_close = false;
     bool udp_mode = false;
-    char const* target = nullptr;
+    DeprecatedString target;
     int port = 0;
     int maximum_tcp_receive_buffer_size_input = -1;
 
@@ -71,7 +71,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         }
 
         Core::EventLoop loop;
-        auto socket = TRY(Core::Stream::UDPSocket::connect(target, port));
+        auto socket = TRY(Core::UDPSocket::connect(target, port));
 
         if (verbose)
             warnln("connected to {}:{}", target, port);
@@ -96,8 +96,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         sa.sin_family = AF_INET;
         sa.sin_port = htons(port);
         sa.sin_addr.s_addr = htonl(INADDR_ANY);
-        if (target) {
-            if (inet_pton(AF_INET, target, &sa.sin_addr) <= 0) {
+        if (!target.is_empty()) {
+            if (inet_pton(AF_INET, target.characters(), &sa.sin_addr) <= 0) {
                 perror("inet_pton");
                 return 1;
             }
@@ -125,7 +125,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         TRY(Core::System::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)));
         TRY(Core::System::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)));
 
-        auto* hostent = gethostbyname(target);
+        auto* hostent = gethostbyname(target.characters());
         if (!hostent) {
             warnln("Socket::connect: Unable to resolve '{}'", target);
             return 1;

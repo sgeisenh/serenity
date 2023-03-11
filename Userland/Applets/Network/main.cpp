@@ -6,7 +6,7 @@
  */
 
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
@@ -107,7 +107,7 @@ private:
     {
         StringBuilder adapter_info;
 
-        auto file_or_error = Core::Stream::File::open("/sys/kernel/net/adapters"sv, Core::Stream::OpenMode::Read);
+        auto file_or_error = Core::File::open("/sys/kernel/net/adapters"sv, Core::File::OpenMode::Read);
         if (file_or_error.is_error()) {
             dbgln("Error: Could not open /sys/kernel/net/adapters: {}", file_or_error.error());
             return "";
@@ -173,14 +173,14 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::unveil(nullptr, nullptr));
 
     bool display_notifications = false;
-    char const* name = nullptr;
+    StringView name;
     Core::ArgsParser args_parser;
     args_parser.add_option(display_notifications, "Display notifications", "display-notifications", 'd');
     args_parser.add_option(name, "Applet name used by WindowServer.ini to set the applet order", "name", 'n', "name");
     args_parser.parse(arguments);
 
-    if (name == nullptr)
-        name = "Network";
+    if (name.is_empty())
+        name = "Network"sv;
 
     auto window = TRY(GUI::Window::try_create());
     window->set_title(name);

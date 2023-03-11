@@ -17,23 +17,23 @@ namespace Web::DOM {
 class AccessibilityTreeNode final : public JS::Cell {
     JS_CELL(AccessibilityTreeNode, JS::Cell)
 public:
-    static JS::NonnullGCPtr<AccessibilityTreeNode> create(Document*, DOM::Node const*);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<AccessibilityTreeNode>> create(Document*, DOM::Node const*);
     virtual ~AccessibilityTreeNode() override = default;
 
-    JS::GCPtr<DOM::Node> value() const { return m_value; }
-    void set_value(JS::GCPtr<DOM::Node> value) { m_value = value; }
+    JS::GCPtr<DOM::Node const> value() const { return m_value; }
+    void set_value(JS::GCPtr<DOM::Node const> value) { m_value = value; }
     Vector<AccessibilityTreeNode*> children() const { return m_children; }
     void append_child(AccessibilityTreeNode* child) { m_children.append(child); }
 
-    void serialize_tree_as_json(JsonObjectSerializer<StringBuilder>& object) const;
+    void serialize_tree_as_json(JsonObjectSerializer<StringBuilder>& object, Document const&) const;
 
 protected:
     virtual void visit_edges(Visitor&) override;
 
 private:
-    explicit AccessibilityTreeNode(JS::GCPtr<DOM::Node>);
+    explicit AccessibilityTreeNode(JS::GCPtr<DOM::Node const>);
 
-    JS::GCPtr<DOM::Node> m_value;
+    JS::GCPtr<DOM::Node const> m_value;
     Vector<AccessibilityTreeNode*> m_children;
 };
 

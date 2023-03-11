@@ -16,6 +16,7 @@
 #include <AK/Variant.h>
 #include <AK/Vector.h>
 #include <Kernel/API/POSIX/sched.h>
+#include <Kernel/API/POSIX/select.h>
 #include <Kernel/API/POSIX/signal_numbers.h>
 #include <Kernel/Arch/RegisterState.h>
 #include <Kernel/Arch/ThreadRegisters.h>
@@ -31,7 +32,6 @@
 #include <Kernel/Locking/SpinlockProtected.h>
 #include <Kernel/Memory/VirtualRange.h>
 #include <Kernel/UnixTypes.h>
-#include <LibC/fd_set.h>
 
 namespace Kernel {
 
@@ -94,19 +94,11 @@ public:
     Process& process() { return m_process; }
     Process const& process() const { return m_process; }
 
-    // NOTE: This returns a null-terminated string.
-    StringView name() const
+    SpinlockProtected<NonnullOwnPtr<KString>, LockRank::None> const& name() const
     {
-        // NOTE: Whoever is calling this needs to be holding our lock while reading the name.
-        VERIFY(m_lock.is_locked_by_current_processor());
-        return m_name->view();
+        return m_name;
     }
-
-    void set_name(NonnullOwnPtr<KString> name)
-    {
-        SpinlockLocker lock(m_lock);
-        m_name = move(name);
-    }
+    void set_name(NonnullOwnPtr<KString> name);
 
     void finalize();
 
@@ -527,7 +519,7 @@ public:
         explicit OpenFileDescriptionBlocker(OpenFileDescription&, BlockFlags, BlockFlags&);
 
     private:
-        NonnullLockRefPtr<OpenFileDescription> m_blocked_description;
+        NonnullRefPtr<OpenFileDescription> m_blocked_description;
         const BlockFlags m_flags;
         BlockFlags& m_unblocked_flags;
         bool m_did_unblock { false };
@@ -585,7 +577,7 @@ public:
     class SelectBlocker final : public FileBlocker {
     public:
         struct FDInfo {
-            LockRefPtr<OpenFileDescription> description;
+            RefPtr<OpenFileDescription> description;
             BlockFlags block_flags { BlockFlags::None };
             BlockFlags unblocked_flags { BlockFlags::None };
         };
@@ -708,7 +700,7 @@ public:
 
     class FlockBlocker final : public Blocker {
     public:
-        FlockBlocker(NonnullLockRefPtr<Inode>, flock const&);
+        FlockBlocker(NonnullRefPtr<Inode>, flock const&);
         virtual StringView state_string() const override { return "Locking File"sv; }
         virtual Type blocker_type() const override { return Type::Flock; }
         virtual void will_unblock_immediately_without_blocking(UnblockImmediatelyReason) override;
@@ -716,7 +708,7 @@ public:
         bool try_unblock(bool from_add_blocker);
 
     private:
-        NonnullLockRefPtr<Inode> m_inode;
+        NonnullRefPtr<Inode> m_inode;
         flock const& m_flock;
         bool m_did_unblock { false };
     };
@@ -1229,7 +1221,7 @@ private:
 
     FPUState m_fpu_state {};
     State m_state { Thread::State::Invalid };
-    NonnullOwnPtr<KString> m_name;
+    SpinlockProtected<NonnullOwnPtr<KString>, LockRank::None> m_name;
     u32 m_priority { THREAD_PRIORITY_NORMAL };
 
     State m_stop_state { Thread::State::Invalid };

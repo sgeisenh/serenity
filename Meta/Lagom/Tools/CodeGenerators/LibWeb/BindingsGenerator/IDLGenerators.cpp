@@ -1,8 +1,9 @@
 /*
- * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
- * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
+ * Copyright (c) 2021-2023, Luke Wilde <lukew@serenityos.org>
  * Copyright (c) 2022, Ali Mohammad Pur <mpfard@serenityos.org>
+ * Copyright (c) 2023, Kenneth Myhra <kennethmyhra@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -28,11 +29,13 @@ static bool is_platform_object(Type const& type)
         "Attr"sv,
         "Blob"sv,
         "CanvasGradient"sv,
+        "CanvasPattern"sv,
         "CanvasRenderingContext2D"sv,
         "Document"sv,
         "DocumentType"sv,
         "EventTarget"sv,
         "FileList"sv,
+        "FormData"sv,
         "ImageData"sv,
         "MutationRecord"sv,
         "NamedNodeMap"sv,
@@ -99,8 +102,12 @@ CppType idl_type_name_to_cpp_type(Type const& type, Interface const& interface)
     if (is_platform_object(type))
         return { .name = DeprecatedString::formatted("JS::Handle<{}>", type.name()), .sequence_storage_type = SequenceStorageType::MarkedVector };
 
-    if (type.is_string())
+    if (type.is_string()) {
+        if (interface.extended_attributes.contains("UseNewAKString"))
+            return { .name = "String", .sequence_storage_type = SequenceStorageType::Vector };
+
         return { .name = "DeprecatedString", .sequence_storage_type = SequenceStorageType::Vector };
+    }
 
     if (type.name() == "double" && !type.is_nullable())
         return { .name = "double", .sequence_storage_type = SequenceStorageType::Vector };
@@ -126,11 +133,17 @@ CppType idl_type_name_to_cpp_type(Type const& type, Interface const& interface)
     if (type.name() == "long" && !type.is_nullable())
         return { .name = "i32", .sequence_storage_type = SequenceStorageType::Vector };
 
-    if (type.name() == "any")
+    if (type.name() == "any" || type.name() == "undefined")
         return { .name = "JS::Value", .sequence_storage_type = SequenceStorageType::MarkedVector };
+
+    if (type.name() == "object")
+        return { .name = "JS::Handle<JS::Object>", .sequence_storage_type = SequenceStorageType::Vector };
 
     if (type.name() == "BufferSource")
         return { .name = "JS::Handle<JS::Object>", .sequence_storage_type = SequenceStorageType::MarkedVector };
+
+    if (type.name() == "File")
+        return { .name = "JS::Handle<FileAPI::File>", .sequence_storage_type = SequenceStorageType::MarkedVector };
 
     if (type.name() == "sequence") {
         auto& parameterized_type = verify_cast<ParameterizedType>(type);
@@ -182,11 +195,10 @@ static DeprecatedString make_input_acceptable_cpp(DeprecatedString const& input)
     return input.replace("-"sv, "_"sv, ReplaceMode::All);
 }
 
-static void generate_include_for_iterator(auto& generator, auto& iterator_path, auto& iterator_name)
+static void generate_include_for_iterator(auto& generator, auto& iterator_path)
 {
     auto iterator_generator = generator.fork();
     iterator_generator.set("iterator_class.path", iterator_path);
-    iterator_generator.set("iterator_class.name", iterator_name);
     // FIXME: These may or may not exist, because REASONS.
     iterator_generator.append(R"~~~(
 //#if __has_include(<LibWeb/@iterator_class.path@.h>)
@@ -236,11 +248,108 @@ static void emit_includes_for_all_imports(auto& interface, auto& generator, bool
             continue;
 
         generate_include_for(generator, interface->module_own_path);
+    }
 
-        if (is_iterator) {
-            auto iterator_name = DeprecatedString::formatted("{}Iterator", interface->name);
-            auto iterator_path = DeprecatedString::formatted("{}Iterator", interface->fully_qualified_name.replace("::"sv, "/"sv, ReplaceMode::All));
-            generate_include_for_iterator(generator, iterator_path, iterator_name);
+    if (is_iterator) {
+        auto iterator_path = DeprecatedString::formatted("{}Iterator", interface.fully_qualified_name.replace("::"sv, "/"sv, ReplaceMode::All));
+        generate_include_for_iterator(generator, iterator_path);
+    }
+}
+
+template<typename ParameterType>
+static void generate_to_deprecated_string(SourceGenerator& scoped_generator, ParameterType const& parameter, bool variadic, bool optional, Optional<DeprecatedString> const& optional_default_value)
+{
+    if (variadic) {
+        scoped_generator.append(R"~~~(
+    Vector<DeprecatedString> @cpp_name@;
+    @cpp_name@.ensure_capacity(vm.argument_count() - @js_suffix@);
+
+    for (size_t i = @js_suffix@; i < vm.argument_count(); ++i) {
+        auto to_string_result = TRY(vm.argument(i).to_deprecated_string(vm));
+        @cpp_name@.append(move(to_string_result));
+    }
+)~~~");
+    } else if (!optional) {
+        if (!parameter.type->is_nullable()) {
+            scoped_generator.append(R"~~~(
+    DeprecatedString @cpp_name@;
+    if (@js_name@@js_suffix@.is_null() && @legacy_null_to_empty_string@) {
+        @cpp_name@ = DeprecatedString::empty();
+    } else {
+        @cpp_name@ = TRY(@js_name@@js_suffix@.to_deprecated_string(vm));
+    }
+)~~~");
+        } else {
+            scoped_generator.append(R"~~~(
+    DeprecatedString @cpp_name@;
+    if (!@js_name@@js_suffix@.is_nullish())
+        @cpp_name@ = TRY(@js_name@@js_suffix@.to_deprecated_string(vm));
+)~~~");
+        }
+    } else {
+        scoped_generator.append(R"~~~(
+    DeprecatedString @cpp_name@;
+    if (!@js_name@@js_suffix@.is_undefined()) {
+        if (@js_name@@js_suffix@.is_null() && @legacy_null_to_empty_string@)
+            @cpp_name@ = DeprecatedString::empty();
+        else
+            @cpp_name@ = TRY(@js_name@@js_suffix@.to_deprecated_string(vm));
+    })~~~");
+        if (optional_default_value.has_value() && (!parameter.type->is_nullable() || optional_default_value.value() != "null")) {
+            scoped_generator.append(R"~~~( else {
+        @cpp_name@ = @parameter.optional_default_value@;
+    }
+)~~~");
+        } else {
+            scoped_generator.append(R"~~~(
+)~~~");
+        }
+    }
+}
+
+template<typename ParameterType>
+static void generate_to_new_string(SourceGenerator& scoped_generator, ParameterType const& parameter, bool variadic, bool optional, Optional<DeprecatedString> const& optional_default_value)
+{
+    if (variadic) {
+        scoped_generator.append(R"~~~(
+    Vector<String> @cpp_name@;
+    @cpp_name@.ensure_capacity(vm.argument_count() - @js_suffix@);
+
+    for (size_t i = @js_suffix@; i < vm.argument_count(); ++i) {
+        auto to_string_result = TRY(vm.argument(i).to_string(vm));
+        @cpp_name@.append(move(to_string_result));
+    }
+)~~~");
+    } else if (!optional) {
+        if (!parameter.type->is_nullable()) {
+            scoped_generator.append(R"~~~(
+    String @cpp_name@;
+    if (!@legacy_null_to_empty_string@ || !@js_name@@js_suffix@.is_null()) {
+        @cpp_name@ = TRY(@js_name@@js_suffix@.to_string(vm));
+    }
+)~~~");
+        } else {
+            scoped_generator.append(R"~~~(
+    Optional<String> @cpp_name@;
+    if (!@js_name@@js_suffix@.is_nullish())
+        @cpp_name@ = TRY(@js_name@@js_suffix@.to_string(vm));
+)~~~");
+        }
+    } else {
+        scoped_generator.append(R"~~~(
+    Optional<String> @cpp_name@;
+    if (!@js_name@@js_suffix@.is_undefined()) {
+        if (!@legacy_null_to_empty_string@ || !@js_name@@js_suffix@.is_null())
+            @cpp_name@ = TRY(@js_name@@js_suffix@.to_string(vm));
+    })~~~");
+        if (optional_default_value.has_value() && (!parameter.type->is_nullable() || optional_default_value.value() != "null")) {
+            scoped_generator.append(R"~~~( else {
+        @cpp_name@ = TRY_OR_THROW_OOM(vm, String::from_utf8(@parameter.optional_default_value@sv));
+    }
+)~~~");
+        } else {
+            scoped_generator.append(R"~~~(
+)~~~");
         }
     }
 }
@@ -261,52 +370,11 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
 
     // FIXME: Add support for optional, variadic, nullable and default values to all types
     if (parameter.type->is_string()) {
-        if (variadic) {
-            scoped_generator.append(R"~~~(
-    Vector<DeprecatedString> @cpp_name@;
-    @cpp_name@.ensure_capacity(vm.argument_count() - @js_suffix@);
-
-    for (size_t i = @js_suffix@; i < vm.argument_count(); ++i) {
-        auto to_string_result = TRY(vm.argument(i).to_deprecated_string(vm));
-        @cpp_name@.append(move(to_string_result));
-    }
-)~~~");
-        } else if (!optional) {
-            if (!parameter.type->is_nullable()) {
-                scoped_generator.append(R"~~~(
-    DeprecatedString @cpp_name@;
-    if (@js_name@@js_suffix@.is_null() && @legacy_null_to_empty_string@) {
-        @cpp_name@ = DeprecatedString::empty();
-    } else {
-        @cpp_name@ = TRY(@js_name@@js_suffix@.to_deprecated_string(vm));
-    }
-)~~~");
-            } else {
-                scoped_generator.append(R"~~~(
-    DeprecatedString @cpp_name@;
-    if (!@js_name@@js_suffix@.is_nullish())
-        @cpp_name@ = TRY(@js_name@@js_suffix@.to_deprecated_string(vm));
-)~~~");
-            }
-        } else {
-            scoped_generator.append(R"~~~(
-    DeprecatedString @cpp_name@;
-    if (!@js_name@@js_suffix@.is_undefined()) {
-        if (@js_name@@js_suffix@.is_null() && @legacy_null_to_empty_string@)
-            @cpp_name@ = DeprecatedString::empty();
+        bool use_new_ak_string = interface.extended_attributes.contains("UseNewAKString");
+        if (!use_new_ak_string)
+            generate_to_deprecated_string(scoped_generator, parameter, variadic, optional, optional_default_value);
         else
-            @cpp_name@ = TRY(@js_name@@js_suffix@.to_deprecated_string(vm));
-    })~~~");
-            if (optional_default_value.has_value() && (!parameter.type->is_nullable() || optional_default_value.value() != "null")) {
-                scoped_generator.append(R"~~~( else {
-        @cpp_name@ = @parameter.optional_default_value@;
-    }
-)~~~");
-            } else {
-                scoped_generator.append(R"~~~(
-)~~~");
-            }
-        }
+            generate_to_new_string(scoped_generator, parameter, variadic, optional, optional_default_value);
     } else if (parameter.type->name().is_one_of("EventListener", "NodeFilter")) {
         // FIXME: Replace this with support for callback interfaces. https://webidl.spec.whatwg.org/#idl-callback-interface
 
@@ -320,16 +388,16 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
     @cpp_type@* @cpp_name@ = nullptr;
     if (!@js_name@@js_suffix@.is_nullish()) {
         if (!@js_name@@js_suffix@.is_object())
-            return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@.to_string_without_side_effects());
+            return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, @js_name@@js_suffix@.to_string_without_side_effects()));
 
         auto callback_type = vm.heap().allocate_without_realm<WebIDL::CallbackType>(@js_name@@js_suffix@.as_object(), HTML::incumbent_settings_object());
-        @cpp_name@ = @cpp_type@::create(realm, *callback_type).ptr();
+        @cpp_name@ = TRY(throw_dom_exception_if_needed(vm, [&] { return @cpp_type@::create(realm, *callback_type); }));
     }
 )~~~");
         } else {
             scoped_generator.append(R"~~~(
     if (!@js_name@@js_suffix@.is_object())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, @js_name@@js_suffix@.to_string_without_side_effects()));
 
     auto callback_type = vm.heap().allocate_without_realm<WebIDL::CallbackType>(@js_name@@js_suffix@.as_object(), HTML::incumbent_settings_object());
     auto @cpp_name@ = adopt_ref(*new @cpp_type@(callback_type));
@@ -527,6 +595,10 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
     }
     auto @cpp_name@ = JS::make_handle(&static_cast<JS::Promise&>(@js_name@@js_suffix@.as_object()));
 )~~~");
+    } else if (parameter.type->name() == "object") {
+        scoped_generator.append(R"~~~(
+    auto @cpp_name@ = JS::make_handle(TRY(@js_name@@js_suffix@.to_object(vm)));
+)~~~");
     } else if (parameter.type->name() == "BufferSource") {
         scoped_generator.append(R"~~~(
     if (!@js_name@@js_suffix@.is_object() || !(is<JS::TypedArrayBase>(@js_name@@js_suffix@.as_object()) || is<JS::ArrayBuffer>(@js_name@@js_suffix@.as_object()) || is<JS::DataView>(@js_name@@js_suffix@.as_object())))
@@ -587,7 +659,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         }
 
         enum_generator.append(R"~~~(
-    auto @js_name.as_string@ = TRY(@js_name@@js_suffix@.to_deprecated_string(vm));
+    auto @js_name.as_string@ = TRY(@js_name@@js_suffix@.to_string(vm));
 )~~~");
         auto first = true;
         VERIFY(enumeration.translated_cpp_names.size() >= 1);
@@ -662,9 +734,16 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
                 }
 
                 generate_to_cpp(dictionary_generator, member, member_property_value_name, "", member_value_name, interface, member.extended_attributes.contains("LegacyNullToEmptyString"), !member.required, member.default_value);
-                dictionary_generator.append(R"~~~(
+                if (member.type->is_string() && optional && interface.extended_attributes.contains("UseNewAKString")) {
+                    dictionary_generator.append(R"~~~(
+    if (@member_value_name@.has_value())
+        @cpp_name@.@member_name@ = @member_value_name@.release_value();
+)~~~");
+                } else {
+                    dictionary_generator.append(R"~~~(
     @cpp_name@.@member_name@ = @member_value_name@;
 )~~~");
+                }
                 if (!member.required && !member.default_value.has_value()) {
                     dictionary_generator.append(R"~~~(
     }
@@ -687,7 +766,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         if (!callback_function.is_legacy_treat_non_object_as_null) {
             callback_function_generator.append(R"~~~(
     if (!@js_name@@js_suffix@.is_function())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, @js_name@@js_suffix@.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, @js_name@@js_suffix@.to_string_without_side_effects()));
 )~~~");
         }
         // 2. Return the IDL callback function type value that represents a reference to the same object that V represents, with the incumbent settings object as the callback context.
@@ -752,11 +831,11 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
 
         sequence_generator.append(R"~~~(
     if (!@js_name@@js_suffix@.is_object())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, @js_name@@js_suffix@.to_string_without_side_effects()));
 
     auto* iterator_method@recursion_depth@ = TRY(@js_name@@js_suffix@.get_method(vm, *vm.well_known_symbol_iterator()));
     if (!iterator_method@recursion_depth@)
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotIterable, @js_name@@js_suffix@.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotIterable, TRY_OR_THROW_OOM(vm, @js_name@@js_suffix@.to_string_without_side_effects()));
 )~~~");
 
         parameterized_type.generate_sequence_from_iterable(sequence_generator, DeprecatedString::formatted("{}{}", acceptable_cpp_name, optional ? "_non_optional" : ""), DeprecatedString::formatted("{}{}", js_name, js_suffix), DeprecatedString::formatted("iterator_method{}", recursion_depth), interface, recursion_depth + 1);
@@ -778,7 +857,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         VERIFY(parameterized_type.parameters().size() == 2);
 
         // A record only allows the key to be a string.
-        VERIFY(parameterized_type.parameters()[0].is_string());
+        VERIFY(parameterized_type.parameters()[0]->is_string());
 
         // An ECMAScript value O is converted to an IDL record<K, V> value as follows:
         // 1. If Type(O) is not Object, throw a TypeError.
@@ -801,7 +880,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         if (recursion_depth == 0) {
             record_generator.append(R"~~~(
     if (!@js_name@@js_suffix@.is_object())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, @js_name@@js_suffix@.to_string_without_side_effects()));
 
     auto& @js_name@@js_suffix@_object = @js_name@@js_suffix@.as_object();
 )~~~");
@@ -849,10 +928,10 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         // 3. Let types be the flattened member types of the union type.
         auto types = union_type.flattened_member_types();
 
-        RefPtr<Type> dictionary_type;
+        RefPtr<Type const> dictionary_type;
         for (auto& dictionary : interface.dictionaries) {
             for (auto& type : types) {
-                if (type.name() == dictionary.key) {
+                if (type->name() == dictionary.key) {
                     dictionary_type = type;
                     break;
                 }
@@ -926,7 +1005,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
 
         bool includes_object = false;
         for (auto& type : types) {
-            if (type.name() == "object") {
+            if (type->name() == "object") {
                 includes_object = true;
                 break;
             }
@@ -960,7 +1039,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
                     continue;
 
                 auto union_platform_object_type_generator = union_generator.fork();
-                union_platform_object_type_generator.set("platform_object_type", type.name());
+                union_platform_object_type_generator.set("platform_object_type", type->name());
 
                 union_platform_object_type_generator.append(R"~~~(
                 if (is<@platform_object_type@>(@js_name@@js_suffix@_object))
@@ -983,7 +1062,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         // 6. If Type(V) is Object and V has an [[ArrayBufferData]] internal slot, then
         //    1. If types includes ArrayBuffer, then return the result of converting V to ArrayBuffer.
         for (auto& type : types) {
-            if (type.name() == "BufferSource") {
+            if (type->name() == "BufferSource") {
                 union_generator.append(R"~~~(
             if (is<JS::ArrayBuffer>(@js_name@@js_suffix@_object))
                 return JS::make_handle(@js_name@@js_suffix@_object);
@@ -1011,10 +1090,10 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
 
         // 10. If Type(V) is Object, then:
         //     1. If types includes a sequence type, then:
-        RefPtr<IDL::ParameterizedType> sequence_type;
+        RefPtr<IDL::ParameterizedType const> sequence_type;
         for (auto& type : types) {
-            if (type.name() == "sequence") {
-                sequence_type = verify_cast<IDL::ParameterizedType>(type);
+            if (type->name() == "sequence") {
+                sequence_type = verify_cast<IDL::ParameterizedType>(*type);
                 break;
             }
         }
@@ -1051,10 +1130,10 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         }
 
         // 4. If types includes a record type, then return the result of converting V to that record type.
-        RefPtr<IDL::ParameterizedType> record_type;
+        RefPtr<IDL::ParameterizedType const> record_type;
         for (auto& type : types) {
-            if (type.name() == "record") {
-                record_type = verify_cast<IDL::ParameterizedType>(type);
+            if (type->name() == "record") {
+                record_type = verify_cast<IDL::ParameterizedType>(*type);
                 break;
             }
         }
@@ -1086,7 +1165,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         //     1. If types includes boolean, then return the result of converting V to boolean.
         bool includes_boolean = false;
         for (auto& type : types) {
-            if (type.name() == "boolean") {
+            if (type->name() == "boolean") {
                 includes_boolean = true;
                 break;
             }
@@ -1099,9 +1178,9 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
 )~~~");
         }
 
-        RefPtr<IDL::Type> numeric_type;
+        RefPtr<IDL::Type const> numeric_type;
         for (auto& type : types) {
-            if (type.is_numeric()) {
+            if (type->is_numeric()) {
                 numeric_type = type;
                 break;
             }
@@ -1128,7 +1207,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         //     1. If types includes bigint, then return the result of converting V to bigint
         bool includes_bigint = false;
         for (auto& type : types) {
-            if (type.name() == "bigint") {
+            if (type->name() == "bigint") {
                 includes_bigint = true;
                 break;
             }
@@ -1143,7 +1222,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
 
         bool includes_string = false;
         for (auto& type : types) {
-            if (type.is_string()) {
+            if (type->is_string()) {
                 includes_string = true;
                 break;
             }
@@ -1152,9 +1231,15 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         if (includes_string) {
             // 14. If types includes a string type, then return the result of converting V to that type.
             // NOTE: Currently all string types are converted to String.
-            union_generator.append(R"~~~(
+            if (interface.extended_attributes.contains("UseNewAKString")) {
+                union_generator.append(R"~~~(
+        return TRY(@js_name@@js_suffix@.to_string(vm));
+)~~~");
+            } else {
+                union_generator.append(R"~~~(
         return TRY(@js_name@@js_suffix@.to_deprecated_string(vm));
 )~~~");
+            }
         } else if (numeric_type && includes_bigint) {
             // 15. If types includes a numeric type and bigint, then return the result of converting V to either that numeric type or bigint.
             // https://webidl.spec.whatwg.org/#converted-to-a-numeric-type-or-bigint
@@ -1211,7 +1296,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
             // 19. Throw a TypeError.
             // FIXME: Replace the error message with something more descriptive.
             union_generator.append(R"~~~(
-        return vm.throw_completion<JS::TypeError>("No union types matched");
+        return vm.throw_completion<JS::TypeError>("No union types matched"sv);
 )~~~");
         }
 
@@ -1234,9 +1319,15 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
 )~~~");
                 } else {
                     if (optional_default_value == "\"\"") {
-                        union_generator.append(R"~~~(
+                        if (!interface.extended_attributes.contains("UseNewAKString")) {
+                            union_generator.append(R"~~~(
     @union_type@ @cpp_name@ = @js_name@@js_suffix@.is_undefined() ? DeprecatedString::empty() : TRY(@js_name@@js_suffix@_to_variant(@js_name@@js_suffix@));
 )~~~");
+                        } else {
+                            union_generator.append(R"~~~(
+    @union_type@ @cpp_name@ = @js_name@@js_suffix@.is_undefined() ? String {} : TRY(@js_name@@js_suffix@_to_variant(@js_name@@js_suffix@));
+)~~~");
+                        }
                     } else if (optional_default_value == "{}") {
                         VERIFY(dictionary_type);
                         union_generator.append(R"~~~(
@@ -1401,11 +1492,19 @@ static void generate_wrap_statement(SourceGenerator& generator, DeprecatedString
 
     if (type.is_nullable() && !is<UnionType>(type)) {
         if (type.is_string()) {
-            scoped_generator.append(R"~~~(
+            if (!interface.extended_attributes.contains("UseNewAKString")) {
+                scoped_generator.append(R"~~~(
     if (@value@.is_null()) {
         @result_expression@ JS::js_null();
     } else {
 )~~~");
+            } else {
+                scoped_generator.append(R"~~~(
+    if (!@value@.has_value()) {
+        @result_expression@ JS::js_null();
+    } else {
+)~~~");
+            }
         } else if (type.name() == "sequence") {
             scoped_generator.append(R"~~~(
     if (!@value@.has_value()) {
@@ -1422,9 +1521,15 @@ static void generate_wrap_statement(SourceGenerator& generator, DeprecatedString
     }
 
     if (type.is_string()) {
-        scoped_generator.append(R"~~~(
+        if (type.is_nullable() && interface.extended_attributes.contains("UseNewAKString")) {
+            scoped_generator.append(R"~~~(
+    @result_expression@ JS::PrimitiveString::create(vm, @value@.release_value());
+)~~~");
+        } else {
+            scoped_generator.append(R"~~~(
     @result_expression@ JS::PrimitiveString::create(vm, @value@);
 )~~~");
+        }
     } else if (type.name() == "sequence") {
         // https://webidl.spec.whatwg.org/#es-sequence
         auto& sequence_generic_type = verify_cast<IDL::ParameterizedType>(type);
@@ -1502,10 +1607,10 @@ static void generate_wrap_statement(SourceGenerator& generator, DeprecatedString
             auto cpp_type = IDL::idl_type_name_to_cpp_type(current_union_type, interface);
             union_generator.set("current_type", cpp_type.name);
             union_generator.append(R"~~~(
-        [&vm, &realm](@current_type@ const& visited_union_value@recursion_depth@) -> JS::Value {
+        [&vm, &realm]([[maybe_unused]] @current_type@ const& visited_union_value@recursion_depth@) -> JS::Value {
             // These may be unused.
             (void)vm;
-            (void) realm;
+            (void)realm;
 )~~~");
 
             // NOTE: While we are using const&, the underlying type for wrappable types in unions is (Nonnull)RefPtr, which are not references.
@@ -1537,9 +1642,15 @@ static void generate_wrap_statement(SourceGenerator& generator, DeprecatedString
     );
 )~~~");
     } else if (interface.enumerations.contains(type.name())) {
-        scoped_generator.append(R"~~~(
+        if (!interface.extended_attributes.contains("UseNewAKString")) {
+            scoped_generator.append(R"~~~(
     @result_expression@ JS::PrimitiveString::create(vm, Bindings::idl_enum_to_deprecated_string(@value@));
 )~~~");
+        } else {
+            scoped_generator.append(R"~~~(
+    @result_expression@ JS::PrimitiveString::create(vm, TRY_OR_THROW_OOM(vm, Bindings::idl_enum_to_string(@value@)));
+)~~~");
+        }
     } else if (interface.callback_functions.contains(type.name())) {
         // https://webidl.spec.whatwg.org/#es-callback-function
 
@@ -1643,7 +1754,6 @@ static void generate_function(SourceGenerator& generator, IDL::Function const& f
     auto function_generator = generator.fork();
     function_generator.set("class_name", class_name);
     function_generator.set("interface_fully_qualified_name", interface_fully_qualified_name);
-    function_generator.set("function.name", function.name);
     function_generator.set("function.name:snakecase", make_input_acceptable_cpp(function.name.to_snakecase()));
     function_generator.set("overload_suffix", function.is_overloaded ? DeprecatedString::number(function.overload_index) : DeprecatedString::empty());
 
@@ -1728,7 +1838,7 @@ static EffectiveOverloadSet compute_the_effective_overload_set(auto const& overl
         int argument_count = (int)arguments.size();
 
         // 3. Let types be a type list.
-        NonnullRefPtrVector<Type> types;
+        Vector<NonnullRefPtr<Type const>> types;
 
         // 4. Let optionalityValues be an optionality list.
         Vector<Optionality> optionality_values;
@@ -1845,7 +1955,7 @@ static DeprecatedString generate_constructor_for_idl_type(Type const& type)
     case Type::Kind::Parameterized: {
         auto const& parameterized_type = type.as_parameterized();
         StringBuilder builder;
-        builder.appendff("make_ref_counted<IDL::ParameterizedTypeType>(\"{}\", {}, NonnullRefPtrVector<IDL::Type> {{", type.name(), type.is_nullable());
+        builder.appendff("make_ref_counted<IDL::ParameterizedTypeType>(\"{}\", {}, Vector<NonnullRefPtr<IDL::Type const>> {{", type.name(), type.is_nullable());
         append_type_list(builder, parameterized_type.parameters());
         builder.append("})"sv);
         return builder.to_deprecated_string();
@@ -1853,7 +1963,7 @@ static DeprecatedString generate_constructor_for_idl_type(Type const& type)
     case Type::Kind::Union: {
         auto const& union_type = type.as_union();
         StringBuilder builder;
-        builder.appendff("make_ref_counted<IDL::UnionType>(\"{}\", {}, NonnullRefPtrVector<IDL::Type> {{", type.name(), type.is_nullable());
+        builder.appendff("make_ref_counted<IDL::UnionType>(\"{}\", {}, Vector<NonnullRefPtr<IDL::Type const>> {{", type.name(), type.is_nullable());
         append_type_list(builder, union_type.member_types());
         builder.append("})"sv);
         return builder.to_deprecated_string();
@@ -1912,7 +2022,7 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@function.name:snakecase@)
                 continue;
 
             StringBuilder types_builder;
-            types_builder.append("NonnullRefPtrVector<IDL::Type> { "sv);
+            types_builder.append("Vector<NonnullRefPtr<IDL::Type const>> { "sv);
             StringBuilder optionality_builder;
             optionality_builder.append("Vector<IDL::Optionality> { "sv);
 
@@ -1981,285 +2091,9 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@function.name:snakecase@)
 )~~~");
 }
 
-void generate_constructor_header(IDL::Interface const& interface, StringBuilder& builder)
+static void generate_prototype_or_global_mixin_declarations(IDL::Interface const& interface, StringBuilder& builder)
 {
     SourceGenerator generator { builder };
-
-    generator.set("name", interface.name);
-    generator.set("fully_qualified_name", interface.fully_qualified_name);
-    generator.set("constructor_class", interface.constructor_class);
-    generator.set("constructor_class:snakecase", interface.constructor_class.to_snakecase());
-
-    generator.append(R"~~~(
-#pragma once
-
-#include <LibJS/Runtime/NativeFunction.h>
-
-namespace Web::Bindings {
-
-class @constructor_class@ : public JS::NativeFunction {
-    JS_OBJECT(@constructor_class@, JS::NativeFunction);
-public:
-    explicit @constructor_class@(JS::Realm&);
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
-    virtual ~@constructor_class@() override;
-
-    virtual JS::ThrowCompletionOr<JS::Value> call() override;
-    virtual JS::ThrowCompletionOr<JS::NonnullGCPtr<JS::Object>> construct(JS::FunctionObject& new_target) override;
-
-private:
-    virtual bool has_constructor() const override { return true; }
-)~~~");
-
-    for (auto const& overload_set : interface.static_overload_sets) {
-        auto function_generator = generator.fork();
-        function_generator.set("function.name:snakecase", make_input_acceptable_cpp(overload_set.key.to_snakecase()));
-        function_generator.append(R"~~~(
-    JS_DECLARE_NATIVE_FUNCTION(@function.name:snakecase@);
-)~~~");
-        if (overload_set.value.size() > 1) {
-            for (auto i = 0u; i < overload_set.value.size(); ++i) {
-                function_generator.set("overload_suffix", DeprecatedString::number(i));
-                function_generator.append(R"~~~(
-    JS_DECLARE_NATIVE_FUNCTION(@function.name:snakecase@@overload_suffix@);
-)~~~");
-            }
-        }
-    }
-
-    generator.append(R"~~~(
-};
-
-} // namespace Web::Bindings
-)~~~");
-}
-
-void generate_constructor_implementation(IDL::Interface const& interface, StringBuilder& builder)
-{
-    SourceGenerator generator { builder };
-
-    generator.set("name", interface.name);
-    generator.set("prototype_class", interface.prototype_class);
-    generator.set("constructor_class", interface.constructor_class);
-    generator.set("prototype_class:snakecase", interface.prototype_class.to_snakecase());
-    generator.set("fully_qualified_name", interface.fully_qualified_name);
-
-    generator.append(R"~~~(
-#include <LibJS/Heap/Heap.h>
-#include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/IteratorOperations.h>
-#include <LibJS/Runtime/ArrayBuffer.h>
-#include <LibWeb/Bindings/@constructor_class@.h>
-#include <LibWeb/Bindings/@prototype_class@.h>
-#include <LibWeb/Bindings/ExceptionOrUtils.h>
-#include <LibWeb/Bindings/Intrinsics.h>
-#if __has_include(<LibWeb/Crypto/@name@.h>)
-#    include <LibWeb/Crypto/@name@.h>
-#elif __has_include(<LibWeb/CSS/@name@.h>)
-#    include <LibWeb/CSS/@name@.h>
-#elif __has_include(<LibWeb/DOM/@name@.h>)
-#    include <LibWeb/DOM/@name@.h>
-#elif __has_include(<LibWeb/Encoding/@name@.h>)
-#    include <LibWeb/Encoding/@name@.h>
-#elif __has_include(<LibWeb/Fetch/@name@.h>)
-#    include <LibWeb/Fetch/@name@.h>
-#elif __has_include(<LibWeb/FileAPI/@name@.h>)
-#    include <LibWeb/FileAPI/@name@.h>
-#elif __has_include(<LibWeb/Geometry/@name@.h>)
-#    include <LibWeb/Geometry/@name@.h>
-#elif __has_include(<LibWeb/HTML/@name@.h>)
-#    include <LibWeb/HTML/@name@.h>
-#elif __has_include(<LibWeb/UIEvents/@name@.h>)
-#    include <LibWeb/UIEvents/@name@.h>
-#elif __has_include(<LibWeb/HighResolutionTime/@name@.h>)
-#    include <LibWeb/HighResolutionTime/@name@.h>
-#elif __has_include(<LibWeb/IntersectionObserver/@name@.h>)
-#    include <LibWeb/IntersectionObserver/@name@.h>
-#elif __has_include(<LibWeb/NavigationTiming/@name@.h>)
-#    include <LibWeb/NavigationTiming/@name@.h>
-#elif __has_include(<LibWeb/RequestIdleCallback/@name@.h>)
-#    include <LibWeb/RequestIdleCallback/@name@.h>
-#elif __has_include(<LibWeb/ResizeObserver/@name@.h>)
-#    include <LibWeb/ResizeObserver/@name@.h>
-#elif __has_include(<LibWeb/SVG/@name@.h>)
-#    include <LibWeb/SVG/@name@.h>
-#elif __has_include(<LibWeb/Selection/@name@.h>)
-#    include <LibWeb/Selection/@name@.h>
-#elif __has_include(<LibWeb/WebSockets/@name@.h>)
-#    include <LibWeb/WebSockets/@name@.h>
-#elif __has_include(<LibWeb/XHR/@name@.h>)
-#    include <LibWeb/XHR/@name@.h>
-#elif __has_include(<LibWeb/URL/@name@.h>)
-#    include <LibWeb/URL/@name@.h>
-#endif
-
-)~~~");
-
-    for (auto& path : interface.required_imported_paths)
-        generate_include_for(generator, path);
-
-    emit_includes_for_all_imports(interface, generator, interface.pair_iterator_types.has_value());
-
-    generator.append(R"~~~(
-// FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
-using namespace Web::CSS;
-using namespace Web::DOM;
-using namespace Web::DOMParsing;
-using namespace Web::Fetch;
-using namespace Web::FileAPI;
-using namespace Web::Geometry;
-using namespace Web::HTML;
-using namespace Web::IntersectionObserver;
-using namespace Web::RequestIdleCallback;
-using namespace Web::ResizeObserver;
-using namespace Web::Selection;
-using namespace Web::Streams;
-using namespace Web::UIEvents;
-using namespace Web::URL;
-using namespace Web::XHR;
-using namespace Web::WebGL;
-using namespace Web::WebIDL;
-
-namespace Web::Bindings {
-
-@constructor_class@::@constructor_class@(JS::Realm& realm)
-    : NativeFunction(*realm.intrinsics().function_prototype())
-{
-}
-
-@constructor_class@::~@constructor_class@()
-{
-}
-
-JS::ThrowCompletionOr<JS::Value> @constructor_class@::call()
-{
-    return vm().throw_completion<JS::TypeError>(JS::ErrorType::ConstructorWithoutNew, "@name@");
-}
-
-JS::ThrowCompletionOr<JS::NonnullGCPtr<JS::Object>> @constructor_class@::construct(FunctionObject&)
-{
-)~~~");
-
-    if (interface.constructors.is_empty()) {
-        // No constructor
-        generator.set("constructor.length", "0");
-        generator.append(R"~~~(
-    return vm().throw_completion<JS::TypeError>(JS::ErrorType::NotAConstructor, "@name@");
-)~~~");
-    } else if (interface.constructors.size() == 1) {
-        // Single constructor
-
-        auto& constructor = interface.constructors[0];
-        generator.set("constructor.length", DeprecatedString::number(constructor.shortest_length()));
-
-        generator.append(R"~~~(
-    auto& vm = this->vm();
-    auto& realm = *vm.current_realm();
-)~~~");
-
-        if (!constructor.parameters.is_empty()) {
-            generate_argument_count_check(generator, constructor.name, constructor.shortest_length());
-
-            StringBuilder arguments_builder;
-            generate_arguments(generator, constructor.parameters, arguments_builder, interface);
-            generator.set(".constructor_arguments", arguments_builder.string_view());
-
-            generator.append(R"~~~(
-    auto impl = TRY(throw_dom_exception_if_needed(vm, [&] { return @fully_qualified_name@::construct_impl(realm, @.constructor_arguments@); }));
-)~~~");
-        } else {
-            generator.append(R"~~~(
-    auto impl = TRY(throw_dom_exception_if_needed(vm, [&] { return @fully_qualified_name@::construct_impl(realm); }));
-)~~~");
-        }
-        generator.append(R"~~~(
-    return *impl;
-)~~~");
-    } else {
-        // Multiple constructor overloads - can't do that yet.
-        TODO();
-    }
-
-    generator.append(R"~~~(
-}
-
-JS::ThrowCompletionOr<void> @constructor_class@::initialize(JS::Realm& realm)
-{
-    auto& vm = this->vm();
-    [[maybe_unused]] u8 default_attributes = JS::Attribute::Enumerable;
-
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
-    define_direct_property(vm.names.prototype, &ensure_web_prototype<@prototype_class@>(realm, "@name@"), 0);
-    define_direct_property(vm.names.length, JS::Value(@constructor.length@), JS::Attribute::Configurable);
-
-)~~~");
-
-    for (auto& constant : interface.constants) {
-        auto constant_generator = generator.fork();
-        constant_generator.set("constant.name", constant.name);
-
-        generate_wrap_statement(constant_generator, constant.value, constant.type, interface, DeprecatedString::formatted("auto constant_{}_value =", constant.name));
-
-        constant_generator.append(R"~~~(
-    define_direct_property("@constant.name@", constant_@constant.name@_value, JS::Attribute::Enumerable);
-)~~~");
-    }
-
-    // https://webidl.spec.whatwg.org/#es-operations
-    for (auto const& overload_set : interface.static_overload_sets) {
-        auto function_generator = generator.fork();
-        function_generator.set("function.name", overload_set.key);
-        function_generator.set("function.name:snakecase", make_input_acceptable_cpp(overload_set.key.to_snakecase()));
-        function_generator.set("function.length", DeprecatedString::number(get_shortest_function_length(overload_set.value)));
-
-        function_generator.append(R"~~~(
-    define_native_function(realm, "@function.name@", @function.name:snakecase@, @function.length@, default_attributes);
-)~~~");
-    }
-
-    generator.append(R"~~~(
-    return {};
-}
-)~~~");
-
-    // Implementation: Static Functions
-    for (auto& function : interface.static_functions)
-        generate_function(generator, function, StaticFunction::Yes, interface.constructor_class, interface.fully_qualified_name, interface);
-    for (auto const& overload_set : interface.static_overload_sets) {
-        if (overload_set.value.size() == 1)
-            continue;
-        generate_overload_arbiter(generator, overload_set, interface.constructor_class);
-    }
-
-    generator.append(R"~~~(
-} // namespace Web::Bindings
-)~~~");
-}
-
-void generate_prototype_header(IDL::Interface const& interface, StringBuilder& builder)
-{
-    SourceGenerator generator { builder };
-
-    generator.set("name", interface.name);
-    generator.set("fully_qualified_name", interface.fully_qualified_name);
-    generator.set("prototype_class", interface.prototype_class);
-    generator.set("prototype_class:snakecase", interface.prototype_class.to_snakecase());
-
-    generator.append(R"~~~(
-#pragma once
-
-#include <LibJS/Runtime/Object.h>
-
-namespace Web::Bindings {
-
-class @prototype_class@ : public JS::Object {
-    JS_OBJECT(@prototype_class@, JS::Object);
-public:
-    explicit @prototype_class@(JS::Realm&);
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
-    virtual ~@prototype_class@() override;
-private:
-)~~~");
 
     for (auto const& overload_set : interface.overload_sets) {
         auto function_generator = generator.fork();
@@ -2301,7 +2135,7 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(@attribute.name:snakecase@_getter);
 )~~~");
 
-        if (!attribute.readonly) {
+        if (!attribute.readonly || attribute.extended_attributes.contains("Replaceable"sv)) {
             attribute_generator.append(R"~~~(
     JS_DECLARE_NATIVE_FUNCTION(@attribute.name:snakecase@_setter);
 )~~~");
@@ -2331,137 +2165,82 @@ enum class @enum.type.name@ {
 
         enum_generator.append(R"~~~(
 };
+)~~~");
+
+        if (!interface.extended_attributes.contains("UseNewAKString")) {
+            enum_generator.append(R"~~~(
 inline DeprecatedString idl_enum_to_deprecated_string(@enum.type.name@ value) {
     switch(value) {
 )~~~");
-        for (auto& entry : it.value.translated_cpp_names) {
-            enum_generator.set("enum.entry", entry.value);
-            enum_generator.set("enum.string", entry.key);
-            enum_generator.append(R"~~~(
+            for (auto& entry : it.value.translated_cpp_names) {
+                enum_generator.set("enum.entry", entry.value);
+                enum_generator.set("enum.string", entry.key);
+                enum_generator.append(R"~~~(
     case @enum.type.name@::@enum.entry@: return "@enum.string@";
 )~~~");
-        }
-        enum_generator.append(R"~~~(
+            }
+            enum_generator.append(R"~~~(
     default: return "<unknown>";
     };
 }
 )~~~");
+        } else {
+            enum_generator.append(R"~~~(
+inline ErrorOr<String> idl_enum_to_string(@enum.type.name@ value) {
+    switch(value) {
+)~~~");
+            for (auto& entry : it.value.translated_cpp_names) {
+                enum_generator.set("enum.entry", entry.value);
+                enum_generator.set("enum.string", entry.key);
+                enum_generator.append(R"~~~(
+    case @enum.type.name@::@enum.entry@: return "@enum.string@"_string;
+)~~~");
+            }
+            enum_generator.append(R"~~~(
+    default: return "<unknown>"_string;
+    };
+}
+)~~~");
+        }
     }
-
-    generator.append(R"~~~(
-} // namespace Web::Bindings
-    )~~~");
 }
 
-void generate_prototype_implementation(IDL::Interface const& interface, StringBuilder& builder)
+static void generate_prototype_or_global_mixin_definitions(IDL::Interface const& interface, StringBuilder& builder)
 {
     SourceGenerator generator { builder };
 
+    auto is_global_interface = interface.extended_attributes.contains("Global");
+    auto class_name = is_global_interface ? interface.global_mixin_class : interface.prototype_class;
     generator.set("name", interface.name);
-    generator.set("parent_name", interface.parent_name);
-    generator.set("prototype_class", interface.prototype_class);
-    generator.set("prototype_base_class", interface.prototype_base_class);
-    generator.set("constructor_class", interface.constructor_class);
-    generator.set("prototype_class:snakecase", interface.prototype_class.to_snakecase());
+    generator.set("class_name", class_name);
     generator.set("fully_qualified_name", interface.fully_qualified_name);
 
     if (interface.pair_iterator_types.has_value()) {
         generator.set("iterator_name", DeprecatedString::formatted("{}Iterator", interface.name));
     }
 
-    generator.append(R"~~~(
-#include <AK/Function.h>
-#include <LibIDL/Types.h>
-#include <LibJS/Runtime/Array.h>
-#include <LibJS/Runtime/DataView.h>
-#include <LibJS/Runtime/Error.h>
-#include <LibJS/Runtime/FunctionObject.h>
-#include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/IteratorOperations.h>
-#include <LibJS/Runtime/TypedArray.h>
-#include <LibJS/Runtime/Value.h>
-#include <LibWeb/Bindings/@prototype_class@.h>
-#include <LibWeb/Bindings/ExceptionOrUtils.h>
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/DOM/Element.h>
-#include <LibWeb/DOM/Event.h>
-#include <LibWeb/DOM/IDLEventListener.h>
-#include <LibWeb/DOM/NodeFilter.h>
-#include <LibWeb/DOM/Range.h>
-#include <LibWeb/HTML/Origin.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
-#include <LibWeb/HTML/Window.h>
-#include <LibWeb/HTML/WindowProxy.h>
-#include <LibWeb/WebIDL/OverloadResolution.h>
-
-#if __has_include(<LibWeb/Bindings/@prototype_base_class@.h>)
-#    include <LibWeb/Bindings/@prototype_base_class@.h>
-#endif
-
-)~~~");
-
-    for (auto& path : interface.required_imported_paths)
-        generate_include_for(generator, path);
-
-    emit_includes_for_all_imports(interface, generator, interface.pair_iterator_types.has_value());
-
-    generator.append(R"~~~(
-
-// FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
-using namespace Web::Crypto;
-using namespace Web::CSS;
-using namespace Web::DOM;
-using namespace Web::DOMParsing;
-using namespace Web::Fetch;
-using namespace Web::FileAPI;
-using namespace Web::Geometry;
-using namespace Web::HTML;
-using namespace Web::IntersectionObserver;
-using namespace Web::NavigationTiming;
-using namespace Web::RequestIdleCallback;
-using namespace Web::ResizeObserver;
-using namespace Web::Selection;
-using namespace Web::Streams;
-using namespace Web::SVG;
-using namespace Web::UIEvents;
-using namespace Web::URL;
-using namespace Web::WebSockets;
-using namespace Web::XHR;
-using namespace Web::WebGL;
-using namespace Web::WebIDL;
-
-namespace Web::Bindings {
-
-@prototype_class@::@prototype_class@([[maybe_unused]] JS::Realm& realm))~~~");
-    if (interface.name == "DOMException") {
-        // https://webidl.spec.whatwg.org/#es-DOMException-specialness
-        // Object.getPrototypeOf(DOMException.prototype) === Error.prototype
+    if (is_global_interface) {
+        // Doing this with macros is not super nice, but simplifies codegen a lot.
         generator.append(R"~~~(
-    : Object(ConstructWithPrototypeTag::Tag, *realm.intrinsics().error_prototype())
-)~~~");
-    } else if (!interface.parent_name.is_empty()) {
-        generator.append(R"~~~(
-    : Object(ConstructWithPrototypeTag::Tag, ensure_web_prototype<@prototype_base_class@>(realm, "@parent_name@"))
+#define define_direct_property (object.define_direct_property)
+#define define_native_accessor (object.define_native_accessor)
+#define define_native_function (object.define_native_function)
+
+JS::ThrowCompletionOr<void> @class_name@::initialize(JS::Realm& realm, JS::Object& object)
+{
 )~~~");
     } else {
         generator.append(R"~~~(
-    : Object(ConstructWithPrototypeTag::Tag, *realm.intrinsics().object_prototype())
+JS::ThrowCompletionOr<void> @class_name@::initialize(JS::Realm& realm)
+{
 )~~~");
     }
 
     // FIXME: Currently almost everything gets default_attributes but it should be configurable per attribute.
     //        See the spec links for details
     generator.append(R"~~~(
-{
-}
 
-@prototype_class@::~@prototype_class@()
-{
-}
-
-JS::ThrowCompletionOr<void> @prototype_class@::initialize(JS::Realm& realm)
-{
-    [[maybe_unused]] auto& vm = this->vm();
+    [[maybe_unused]] auto& vm = realm.vm();
     [[maybe_unused]] u8 default_attributes = JS::Attribute::Enumerable | JS::Attribute::Configurable | JS::Attribute::Writable;
 
 )~~~");
@@ -2478,10 +2257,10 @@ JS::ThrowCompletionOr<void> @prototype_class@::initialize(JS::Realm& realm)
         attribute_generator.set("attribute.name", attribute.name);
         attribute_generator.set("attribute.getter_callback", attribute.getter_callback_name);
 
-        if (attribute.readonly)
-            attribute_generator.set("attribute.setter_callback", "nullptr");
-        else
+        if (!attribute.readonly || attribute.extended_attributes.contains("Replaceable"sv))
             attribute_generator.set("attribute.setter_callback", attribute.setter_callback_name);
+        else
+            attribute_generator.set("attribute.setter_callback", "nullptr");
 
         if (attribute.extended_attributes.contains("Unscopable")) {
             attribute_generator.append(R"~~~(
@@ -2575,9 +2354,16 @@ JS::ThrowCompletionOr<void> @prototype_class@::initialize(JS::Realm& realm)
     }
 
     generator.append(R"~~~(
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), JS::PrimitiveString::create(vm, "@name@"), JS::Attribute::Configurable);
+    define_direct_property(*vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(JS::PrimitiveString::create(vm, "@name@"sv)), JS::Attribute::Configurable);
+)~~~");
 
-    MUST_OR_THROW_OOM(Object::initialize(realm));
+    if (!is_global_interface) {
+        generator.append(R"~~~(
+    MUST_OR_THROW_OOM(Base::initialize(realm));
+)~~~");
+    }
+
+    generator.append(R"~~~(
     return {};
 }
 )~~~");
@@ -2594,7 +2380,7 @@ static JS::ThrowCompletionOr<@fully_qualified_name@*> impl_from(JS::VM& vm)
         this_object = TRY(this_value.to_object(vm));
 )~~~");
 
-        if (interface.name == "EventTarget") {
+        if (interface.name.is_one_of("EventTarget", "Window")) {
             generator.append(R"~~~(
     if (is<HTML::Window>(this_object)) {
         return static_cast<HTML::Window*>(this_object);
@@ -2607,8 +2393,7 @@ static JS::ThrowCompletionOr<@fully_qualified_name@*> impl_from(JS::VM& vm)
 
         generator.append(R"~~~(
     if (!is<@fully_qualified_name@>(this_object))
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "@fully_qualified_name@");
-
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "@name@");
     return static_cast<@fully_qualified_name@*>(this_object);
 }
 )~~~");
@@ -2616,6 +2401,7 @@ static JS::ThrowCompletionOr<@fully_qualified_name@*> impl_from(JS::VM& vm)
 
     for (auto& attribute : interface.attributes) {
         auto attribute_generator = generator.fork();
+        attribute_generator.set("attribute.name", attribute.name);
         attribute_generator.set("attribute.getter_callback", attribute.getter_callback_name);
         attribute_generator.set("attribute.setter_callback", attribute.setter_callback_name);
 
@@ -2638,7 +2424,7 @@ static JS::ThrowCompletionOr<@fully_qualified_name@*> impl_from(JS::VM& vm)
         }
 
         attribute_generator.append(R"~~~(
-JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::@attribute.getter_callback@)
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.getter_callback@)
 {
     [[maybe_unused]] auto& realm = *vm.current_realm();
     auto* impl = TRY(impl_from(vm));
@@ -2668,7 +2454,7 @@ JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::@attribute.getter_callback@)
 
         if (!attribute.readonly) {
             attribute_generator.append(R"~~~(
-JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::@attribute.setter_callback@)
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.setter_callback@)
 {
     [[maybe_unused]] auto& realm = *vm.current_realm();
     auto* impl = TRY(impl_from(vm));
@@ -2701,21 +2487,32 @@ JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::@attribute.setter_callback@)
     return JS::js_undefined();
 }
 )~~~");
+        } else if (attribute.extended_attributes.contains("Replaceable"sv)) {
+            attribute_generator.append(R"~~~(
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.setter_callback@)
+{
+    auto this_value = vm.this_value();
+    if (!this_value.is_object() || !is<@fully_qualified_name@>(this_value.as_object()))
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "@name@");
+    TRY(this_value.as_object().internal_define_own_property("@attribute.name@", JS::PropertyDescriptor { .value = vm.argument(0), .writable = true }));
+    return JS::js_undefined();
+}
+)~~~");
         }
     }
 
     // Implementation: Functions
     for (auto& function : interface.functions)
-        generate_function(generator, function, StaticFunction::No, interface.prototype_class, interface.fully_qualified_name, interface);
+        generate_function(generator, function, StaticFunction::No, class_name, interface.fully_qualified_name, interface);
     for (auto const& overload_set : interface.overload_sets) {
         if (overload_set.value.size() == 1)
             continue;
-        generate_overload_arbiter(generator, overload_set, interface.prototype_class);
+        generate_overload_arbiter(generator, overload_set, class_name);
     }
 
     if (interface.has_stringifier) {
         auto stringifier_generator = generator.fork();
-        stringifier_generator.set("class_name", interface.prototype_class);
+        stringifier_generator.set("class_name", class_name);
         if (interface.stringifier_attribute.has_value())
             stringifier_generator.set("attribute.cpp_getter_name", interface.stringifier_attribute->to_snakecase());
 
@@ -2728,12 +2525,18 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::to_string)
 )~~~");
         if (interface.stringifier_attribute.has_value()) {
             stringifier_generator.append(R"~~~(
-    auto retval = impl->@attribute.cpp_getter_name@();
+    auto retval = TRY(throw_dom_exception_if_needed(vm, [&] { return impl->@attribute.cpp_getter_name@(); }));
 )~~~");
         } else {
-            stringifier_generator.append(R"~~~(
+            if (!interface.extended_attributes.contains("UseNewAKString")) {
+                stringifier_generator.append(R"~~~(
     auto retval = TRY(throw_dom_exception_if_needed(vm, [&] { return impl->to_deprecated_string(); }));
 )~~~");
+            } else {
+                stringifier_generator.append(R"~~~(
+    auto retval = TRY(throw_dom_exception_if_needed(vm, [&] { return impl->to_string(); }));
+)~~~");
+            }
         }
         stringifier_generator.append(R"~~~(
 
@@ -2745,21 +2548,21 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::to_string)
     if (interface.pair_iterator_types.has_value()) {
         auto iterator_generator = generator.fork();
         iterator_generator.append(R"~~~(
-JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::entries)
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::entries)
 {
     auto* impl = TRY(impl_from(vm));
 
-    return @iterator_name@::create(*impl, Object::PropertyKind::KeyAndValue).ptr();
+    return TRY(throw_dom_exception_if_needed(vm, [&] { return @iterator_name@::create(*impl, Object::PropertyKind::KeyAndValue); }));
 }
 
-JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::for_each)
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::for_each)
 {
     [[maybe_unused]] auto& realm = *vm.current_realm();
     auto* impl = TRY(impl_from(vm));
 
     auto callback = vm.argument(0);
     if (!callback.is_function())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, callback.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback.to_string_without_side_effects()));
 
     auto this_value = vm.this_value();
     TRY(impl->for_each([&](auto key, auto value) -> JS::ThrowCompletionOr<void> {
@@ -2774,20 +2577,422 @@ JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::for_each)
     return JS::js_undefined();
 }
 
-JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::keys)
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::keys)
 {
     auto* impl = TRY(impl_from(vm));
 
-    return @iterator_name@::create(*impl, Object::PropertyKind::Key).ptr();
+    return TRY(throw_dom_exception_if_needed(vm, [&] { return @iterator_name@::create(*impl, Object::PropertyKind::Key);  }));
 }
 
-JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::values)
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::values)
 {
     auto* impl = TRY(impl_from(vm));
 
-    return @iterator_name@::create(*impl, Object::PropertyKind::Value).ptr();
+    return TRY(throw_dom_exception_if_needed(vm, [&] { return @iterator_name@::create(*impl, Object::PropertyKind::Value); }));
 }
 )~~~");
+    }
+}
+
+void generate_constructor_header(IDL::Interface const& interface, StringBuilder& builder)
+{
+    SourceGenerator generator { builder };
+
+    generator.set("constructor_class", interface.constructor_class);
+
+    generator.append(R"~~~(
+#pragma once
+
+#include <LibJS/Runtime/NativeFunction.h>
+
+namespace Web::Bindings {
+
+class @constructor_class@ : public JS::NativeFunction {
+    JS_OBJECT(@constructor_class@, JS::NativeFunction);
+public:
+    explicit @constructor_class@(JS::Realm&);
+    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual ~@constructor_class@() override;
+
+    virtual JS::ThrowCompletionOr<JS::Value> call() override;
+    virtual JS::ThrowCompletionOr<JS::NonnullGCPtr<JS::Object>> construct(JS::FunctionObject& new_target) override;
+
+private:
+    virtual bool has_constructor() const override { return true; }
+)~~~");
+
+    for (auto const& overload_set : interface.static_overload_sets) {
+        auto function_generator = generator.fork();
+        function_generator.set("function.name:snakecase", make_input_acceptable_cpp(overload_set.key.to_snakecase()));
+        function_generator.append(R"~~~(
+    JS_DECLARE_NATIVE_FUNCTION(@function.name:snakecase@);
+)~~~");
+        if (overload_set.value.size() > 1) {
+            for (auto i = 0u; i < overload_set.value.size(); ++i) {
+                function_generator.set("overload_suffix", DeprecatedString::number(i));
+                function_generator.append(R"~~~(
+    JS_DECLARE_NATIVE_FUNCTION(@function.name:snakecase@@overload_suffix@);
+)~~~");
+            }
+        }
+    }
+
+    generator.append(R"~~~(
+};
+
+} // namespace Web::Bindings
+)~~~");
+}
+
+void generate_constructor_implementation(IDL::Interface const& interface, StringBuilder& builder)
+{
+    SourceGenerator generator { builder };
+
+    generator.set("name", interface.name);
+    generator.set("prototype_class", interface.prototype_class);
+    generator.set("constructor_class", interface.constructor_class);
+    generator.set("fully_qualified_name", interface.fully_qualified_name);
+
+    generator.append(R"~~~(
+#include <LibJS/Heap/Heap.h>
+#include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/ArrayBuffer.h>
+#include <LibWeb/Bindings/@constructor_class@.h>
+#include <LibWeb/Bindings/@prototype_class@.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#if __has_include(<LibWeb/Crypto/@name@.h>)
+#    include <LibWeb/Crypto/@name@.h>
+#elif __has_include(<LibWeb/CSS/@name@.h>)
+#    include <LibWeb/CSS/@name@.h>
+#elif __has_include(<LibWeb/DOM/@name@.h>)
+#    include <LibWeb/DOM/@name@.h>
+#elif __has_include(<LibWeb/Encoding/@name@.h>)
+#    include <LibWeb/Encoding/@name@.h>
+#elif __has_include(<LibWeb/Fetch/@name@.h>)
+#    include <LibWeb/Fetch/@name@.h>
+#elif __has_include(<LibWeb/FileAPI/@name@.h>)
+#    include <LibWeb/FileAPI/@name@.h>
+#elif __has_include(<LibWeb/Geometry/@name@.h>)
+#    include <LibWeb/Geometry/@name@.h>
+#elif __has_include(<LibWeb/HTML/@name@.h>)
+#    include <LibWeb/HTML/@name@.h>
+#elif __has_include(<LibWeb/UIEvents/@name@.h>)
+#    include <LibWeb/UIEvents/@name@.h>
+#elif __has_include(<LibWeb/HighResolutionTime/@name@.h>)
+#    include <LibWeb/HighResolutionTime/@name@.h>
+#elif __has_include(<LibWeb/IntersectionObserver/@name@.h>)
+#    include <LibWeb/IntersectionObserver/@name@.h>
+#elif __has_include(<LibWeb/NavigationTiming/@name@.h>)
+#    include <LibWeb/NavigationTiming/@name@.h>
+#elif __has_include(<LibWeb/RequestIdleCallback/@name@.h>)
+#    include <LibWeb/RequestIdleCallback/@name@.h>
+#elif __has_include(<LibWeb/ResizeObserver/@name@.h>)
+#    include <LibWeb/ResizeObserver/@name@.h>
+#elif __has_include(<LibWeb/SVG/@name@.h>)
+#    include <LibWeb/SVG/@name@.h>
+#elif __has_include(<LibWeb/Selection/@name@.h>)
+#    include <LibWeb/Selection/@name@.h>
+#elif __has_include(<LibWeb/WebSockets/@name@.h>)
+#    include <LibWeb/WebSockets/@name@.h>
+#elif __has_include(<LibWeb/XHR/@name@.h>)
+#    include <LibWeb/XHR/@name@.h>
+#elif __has_include(<LibWeb/URL/@name@.h>)
+#    include <LibWeb/URL/@name@.h>
+#endif
+
+)~~~");
+
+    for (auto& path : interface.required_imported_paths)
+        generate_include_for(generator, path);
+
+    emit_includes_for_all_imports(interface, generator, interface.pair_iterator_types.has_value());
+
+    generator.append(R"~~~(
+// FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
+using namespace Web::CSS;
+using namespace Web::DOM;
+using namespace Web::DOMParsing;
+using namespace Web::Fetch;
+using namespace Web::FileAPI;
+using namespace Web::Geometry;
+using namespace Web::HighResolutionTime;
+using namespace Web::HTML;
+using namespace Web::IntersectionObserver;
+using namespace Web::RequestIdleCallback;
+using namespace Web::ResizeObserver;
+using namespace Web::Selection;
+using namespace Web::Streams;
+using namespace Web::UIEvents;
+using namespace Web::URL;
+using namespace Web::XHR;
+using namespace Web::WebGL;
+using namespace Web::WebIDL;
+
+namespace Web::Bindings {
+
+@constructor_class@::@constructor_class@(JS::Realm& realm)
+    : NativeFunction(*realm.intrinsics().function_prototype())
+{
+}
+
+@constructor_class@::~@constructor_class@()
+{
+}
+
+JS::ThrowCompletionOr<JS::Value> @constructor_class@::call()
+{
+    return vm().throw_completion<JS::TypeError>(JS::ErrorType::ConstructorWithoutNew, "@name@");
+}
+
+JS::ThrowCompletionOr<JS::NonnullGCPtr<JS::Object>> @constructor_class@::construct(FunctionObject&)
+{
+)~~~");
+
+    if (interface.constructors.is_empty()) {
+        // No constructor
+        generator.set("constructor.length", "0");
+        generator.append(R"~~~(
+    return vm().throw_completion<JS::TypeError>(JS::ErrorType::NotAConstructor, "@name@");
+)~~~");
+    } else if (interface.constructors.size() == 1) {
+        // Single constructor
+
+        auto& constructor = interface.constructors[0];
+        generator.set("constructor.length", DeprecatedString::number(constructor.shortest_length()));
+
+        generator.append(R"~~~(
+    auto& vm = this->vm();
+    auto& realm = *vm.current_realm();
+)~~~");
+
+        if (!constructor.parameters.is_empty()) {
+            generate_argument_count_check(generator, constructor.name, constructor.shortest_length());
+
+            StringBuilder arguments_builder;
+            generate_arguments(generator, constructor.parameters, arguments_builder, interface);
+            generator.set(".constructor_arguments", arguments_builder.string_view());
+
+            generator.append(R"~~~(
+    auto impl = TRY(throw_dom_exception_if_needed(vm, [&] { return @fully_qualified_name@::construct_impl(realm, @.constructor_arguments@); }));
+)~~~");
+        } else {
+            generator.append(R"~~~(
+    auto impl = TRY(throw_dom_exception_if_needed(vm, [&] { return @fully_qualified_name@::construct_impl(realm); }));
+)~~~");
+        }
+        generator.append(R"~~~(
+    return *impl;
+)~~~");
+    } else {
+        // Multiple constructor overloads - can't do that yet.
+        TODO();
+    }
+
+    generator.append(R"~~~(
+}
+
+JS::ThrowCompletionOr<void> @constructor_class@::initialize(JS::Realm& realm)
+{
+    auto& vm = this->vm();
+    [[maybe_unused]] u8 default_attributes = JS::Attribute::Enumerable;
+
+    MUST_OR_THROW_OOM(Base::initialize(realm));
+    define_direct_property(vm.names.prototype, &ensure_web_prototype<@prototype_class@>(realm, "@name@"), 0);
+    define_direct_property(vm.names.length, JS::Value(@constructor.length@), JS::Attribute::Configurable);
+
+)~~~");
+
+    for (auto& constant : interface.constants) {
+        auto constant_generator = generator.fork();
+        constant_generator.set("constant.name", constant.name);
+
+        generate_wrap_statement(constant_generator, constant.value, constant.type, interface, DeprecatedString::formatted("auto constant_{}_value =", constant.name));
+
+        constant_generator.append(R"~~~(
+    define_direct_property("@constant.name@", constant_@constant.name@_value, JS::Attribute::Enumerable);
+)~~~");
+    }
+
+    // https://webidl.spec.whatwg.org/#es-operations
+    for (auto const& overload_set : interface.static_overload_sets) {
+        auto function_generator = generator.fork();
+        function_generator.set("function.name", overload_set.key);
+        function_generator.set("function.name:snakecase", make_input_acceptable_cpp(overload_set.key.to_snakecase()));
+        function_generator.set("function.length", DeprecatedString::number(get_shortest_function_length(overload_set.value)));
+
+        function_generator.append(R"~~~(
+    define_native_function(realm, "@function.name@", @function.name:snakecase@, @function.length@, default_attributes);
+)~~~");
+    }
+
+    generator.append(R"~~~(
+    return {};
+}
+)~~~");
+
+    // Implementation: Static Functions
+    for (auto& function : interface.static_functions)
+        generate_function(generator, function, StaticFunction::Yes, interface.constructor_class, interface.fully_qualified_name, interface);
+    for (auto const& overload_set : interface.static_overload_sets) {
+        if (overload_set.value.size() == 1)
+            continue;
+        generate_overload_arbiter(generator, overload_set, interface.constructor_class);
+    }
+
+    generator.append(R"~~~(
+} // namespace Web::Bindings
+)~~~");
+}
+
+void generate_prototype_header(IDL::Interface const& interface, StringBuilder& builder)
+{
+    SourceGenerator generator { builder };
+
+    generator.set("prototype_class", interface.prototype_class);
+
+    generator.append(R"~~~(
+#pragma once
+
+#include <LibJS/Runtime/Object.h>
+
+namespace Web::Bindings {
+
+class @prototype_class@ : public JS::Object {
+    JS_OBJECT(@prototype_class@, JS::Object);
+public:
+    explicit @prototype_class@(JS::Realm&);
+    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual ~@prototype_class@() override;
+private:
+)~~~");
+
+    // Generate an empty prototype object for global interfaces.
+    auto is_global_interface = interface.extended_attributes.contains("Global");
+    if (is_global_interface) {
+        generator.append(R"~~~(
+};
+)~~~");
+    } else {
+        generate_prototype_or_global_mixin_declarations(interface, builder);
+    }
+
+    generator.append(R"~~~(
+} // namespace Web::Bindings
+    )~~~");
+}
+
+void generate_prototype_implementation(IDL::Interface const& interface, StringBuilder& builder)
+{
+    SourceGenerator generator { builder };
+
+    generator.set("parent_name", interface.parent_name);
+    generator.set("prototype_class", interface.prototype_class);
+    generator.set("prototype_base_class", interface.prototype_base_class);
+
+    generator.append(R"~~~(
+#include <AK/Function.h>
+#include <LibIDL/Types.h>
+#include <LibJS/Runtime/Array.h>
+#include <LibJS/Runtime/DataView.h>
+#include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/FunctionObject.h>
+#include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/TypedArray.h>
+#include <LibJS/Runtime/Value.h>
+#include <LibWeb/Bindings/@prototype_class@.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/DOM/Element.h>
+#include <LibWeb/DOM/Event.h>
+#include <LibWeb/DOM/IDLEventListener.h>
+#include <LibWeb/DOM/NodeFilter.h>
+#include <LibWeb/DOM/Range.h>
+#include <LibWeb/HTML/Origin.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
+#include <LibWeb/HTML/Window.h>
+#include <LibWeb/HTML/WindowProxy.h>
+#include <LibWeb/WebIDL/OverloadResolution.h>
+
+#if __has_include(<LibWeb/Bindings/@prototype_base_class@.h>)
+#    include <LibWeb/Bindings/@prototype_base_class@.h>
+#endif
+
+)~~~");
+
+    for (auto& path : interface.required_imported_paths)
+        generate_include_for(generator, path);
+
+    emit_includes_for_all_imports(interface, generator, interface.pair_iterator_types.has_value());
+
+    generator.append(R"~~~(
+
+// FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
+using namespace Web::Crypto;
+using namespace Web::CSS;
+using namespace Web::DOM;
+using namespace Web::DOMParsing;
+using namespace Web::Fetch;
+using namespace Web::FileAPI;
+using namespace Web::Geometry;
+using namespace Web::HighResolutionTime;
+using namespace Web::HTML;
+using namespace Web::IntersectionObserver;
+using namespace Web::NavigationTiming;
+using namespace Web::RequestIdleCallback;
+using namespace Web::ResizeObserver;
+using namespace Web::Selection;
+using namespace Web::Streams;
+using namespace Web::SVG;
+using namespace Web::UIEvents;
+using namespace Web::URL;
+using namespace Web::WebSockets;
+using namespace Web::XHR;
+using namespace Web::WebGL;
+using namespace Web::WebIDL;
+
+namespace Web::Bindings {
+
+@prototype_class@::@prototype_class@([[maybe_unused]] JS::Realm& realm))~~~");
+    if (interface.name == "DOMException") {
+        // https://webidl.spec.whatwg.org/#es-DOMException-specialness
+        // Object.getPrototypeOf(DOMException.prototype) === Error.prototype
+        generator.append(R"~~~(
+    : Object(ConstructWithPrototypeTag::Tag, *realm.intrinsics().error_prototype())
+)~~~");
+    } else if (!interface.parent_name.is_empty()) {
+        generator.append(R"~~~(
+    : Object(ConstructWithPrototypeTag::Tag, ensure_web_prototype<@prototype_base_class@>(realm, "@parent_name@"))
+)~~~");
+    } else {
+        generator.append(R"~~~(
+    : Object(ConstructWithPrototypeTag::Tag, *realm.intrinsics().object_prototype())
+)~~~");
+    }
+
+    generator.append(R"~~~(
+{
+}
+
+@prototype_class@::~@prototype_class@()
+{
+}
+)~~~");
+
+    // Generate an empty prototype object for global interfaces.
+    auto is_global_interface = interface.extended_attributes.contains("Global");
+    if (is_global_interface) {
+        generator.append(R"~~~(
+JS::ThrowCompletionOr<void> @prototype_class@::initialize(JS::Realm& realm)
+{
+    MUST_OR_THROW_OOM(Base::initialize(realm));
+    return {};
+}
+)~~~");
+    } else {
+        generate_prototype_or_global_mixin_definitions(interface, builder);
     }
 
     generator.append(R"~~~(
@@ -2860,6 +3065,7 @@ using namespace Web::DOMParsing;
 using namespace Web::Fetch;
 using namespace Web::FileAPI;
 using namespace Web::Geometry;
+using namespace Web::HighResolutionTime;
 using namespace Web::HTML;
 using namespace Web::IntersectionObserver;
 using namespace Web::NavigationTiming;
@@ -2886,10 +3092,10 @@ namespace Web::Bindings {
 JS::ThrowCompletionOr<void> @prototype_class@::initialize(JS::Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Object::initialize(realm));
+    MUST_OR_THROW_OOM(Base::initialize(realm));
 
     define_native_function(realm, vm.names.next, next, 0, JS::Attribute::Writable | JS::Attribute::Enumerable | JS::Attribute::Configurable);
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), JS::PrimitiveString::create(vm, "Iterator"), JS::Attribute::Configurable);
+    define_direct_property(*vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(JS::PrimitiveString::create(vm, "Iterator"sv)), JS::Attribute::Configurable);
 
     return {};
 }
@@ -2898,7 +3104,7 @@ static JS::ThrowCompletionOr<@fully_qualified_name@*> impl_from(JS::VM& vm)
 {
     auto* this_object = TRY(vm.this_value().to_object(vm));
     if (!is<@fully_qualified_name@>(this_object))
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "@fully_qualified_name@");
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "@name@");
     return static_cast<@fully_qualified_name@*>(this_object);
 }
 
@@ -2911,4 +3117,111 @@ JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::next)
 } // namespace Web::Bindings
 )~~~");
 }
+
+void generate_global_mixin_header(IDL::Interface const& interface, StringBuilder& builder)
+{
+    SourceGenerator generator { builder };
+
+    generator.set("class_name", interface.global_mixin_class);
+
+    generator.append(R"~~~(
+#pragma once
+
+#include <LibJS/Runtime/Object.h>
+
+namespace Web::Bindings {
+
+class @class_name@ {
+public:
+    JS::ThrowCompletionOr<void> initialize(JS::Realm&, JS::Object&);
+    @class_name@();
+    virtual ~@class_name@();
+
+private:
+)~~~");
+
+    generate_prototype_or_global_mixin_declarations(interface, builder);
+
+    generator.append(R"~~~(
+} // namespace Web::Bindings
+    )~~~");
+}
+
+void generate_global_mixin_implementation(IDL::Interface const& interface, StringBuilder& builder)
+{
+    SourceGenerator generator { builder };
+
+    generator.set("class_name", interface.global_mixin_class);
+
+    generator.append(R"~~~(
+#include <AK/Function.h>
+#include <LibIDL/Types.h>
+#include <LibJS/Runtime/Array.h>
+#include <LibJS/Runtime/DataView.h>
+#include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/FunctionObject.h>
+#include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/TypedArray.h>
+#include <LibJS/Runtime/Value.h>
+#include <LibWeb/Bindings/@class_name@.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/DOM/Element.h>
+#include <LibWeb/DOM/Event.h>
+#include <LibWeb/DOM/IDLEventListener.h>
+#include <LibWeb/DOM/NodeFilter.h>
+#include <LibWeb/DOM/Range.h>
+#include <LibWeb/HTML/Origin.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
+#include <LibWeb/HTML/Window.h>
+#include <LibWeb/HTML/WindowProxy.h>
+#include <LibWeb/WebIDL/OverloadResolution.h>
+
+)~~~");
+
+    for (auto& path : interface.required_imported_paths)
+        generate_include_for(generator, path);
+
+    emit_includes_for_all_imports(interface, generator, interface.pair_iterator_types.has_value());
+
+    generator.append(R"~~~(
+
+// FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
+using namespace Web::Crypto;
+using namespace Web::CSS;
+using namespace Web::DOM;
+using namespace Web::DOMParsing;
+using namespace Web::Fetch;
+using namespace Web::FileAPI;
+using namespace Web::Geometry;
+using namespace Web::HighResolutionTime;
+using namespace Web::HTML;
+using namespace Web::IntersectionObserver;
+using namespace Web::NavigationTiming;
+using namespace Web::RequestIdleCallback;
+using namespace Web::ResizeObserver;
+using namespace Web::Selection;
+using namespace Web::Streams;
+using namespace Web::SVG;
+using namespace Web::UIEvents;
+using namespace Web::URL;
+using namespace Web::WebSockets;
+using namespace Web::XHR;
+using namespace Web::WebGL;
+using namespace Web::WebIDL;
+
+namespace Web::Bindings {
+
+@class_name@::@class_name@() = default;
+@class_name@::~@class_name@() = default;
+)~~~");
+
+    generate_prototype_or_global_mixin_definitions(interface, builder);
+
+    generator.append(R"~~~(
+} // namespace Web::Bindings
+    )~~~");
+}
+
 }

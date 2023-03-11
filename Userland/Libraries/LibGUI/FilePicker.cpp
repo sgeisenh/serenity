@@ -6,7 +6,8 @@
 
 #include <AK/Function.h>
 #include <AK/LexicalPath.h>
-#include <LibCore/File.h>
+#include <LibConfig/Client.h>
+#include <LibCore/DeprecatedFile.h>
 #include <LibCore/StandardPaths.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/BoxLayout.h>
@@ -163,7 +164,7 @@ FilePicker::FilePicker(Window* parent_window, Mode mode, StringView filename, St
     auto mkdir_action = Action::create(
         "New directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"sv).release_value_but_fixme_should_propagate_errors(), [this](Action const&) {
             DeprecatedString value;
-            if (InputBox::show(this, value, "Enter name:"sv, "New directory"sv) == InputBox::ExecResult::OK && !value.is_empty()) {
+            if (InputBox::show(this, value, "Enter name:"sv, "New directory"sv, GUI::InputType::NonemptyText) == InputBox::ExecResult::OK) {
                 auto new_dir_path = LexicalPath::canonicalized_path(DeprecatedString::formatted("{}/{}", m_model->root_path(), value));
                 int rc = mkdir(new_dir_path.characters(), 0777);
                 if (rc < 0) {
@@ -203,12 +204,21 @@ FilePicker::FilePicker(Window* parent_window, Mode mode, StringView filename, St
     };
 
     m_context_menu = GUI::Menu::construct();
-    m_context_menu->add_action(GUI::Action::create_checkable(
+
+    m_context_menu->add_action(mkdir_action);
+    m_context_menu->add_separator();
+
+    auto show_dotfiles = GUI::Action::create_checkable(
         "Show dotfiles", { Mod_Ctrl, Key_H }, [&](auto& action) {
             m_model->set_should_show_dotfiles(action.is_checked());
             m_model->invalidate();
         },
-        this));
+        this);
+    auto show_dotfiles_preset = Config::read_bool("FileManager"sv, "DirectoryView"sv, "ShowDotFiles"sv, false);
+    if (show_dotfiles_preset)
+        show_dotfiles->activate();
+
+    m_context_menu->add_action(show_dotfiles);
 
     m_view->on_context_menu_request = [&](const GUI::ModelIndex& index, const GUI::ContextMenuEvent& event) {
         if (!index.is_valid()) {
@@ -224,7 +234,7 @@ FilePicker::FilePicker(Window* parent_window, Mode mode, StringView filename, St
     ok_button.set_enabled(m_mode == Mode::OpenFolder || !m_filename_textbox->text().is_empty());
 
     auto& cancel_button = *widget->find_descendant_of_type_named<GUI::Button>("cancel_button");
-    cancel_button.set_text("Cancel");
+    cancel_button.set_text("Cancel"_short_string);
     cancel_button.on_click = [this](auto) {
         done(ExecResult::Cancel);
     };
@@ -310,7 +320,7 @@ void FilePicker::on_file_return()
         path = LexicalPath::join(m_model->root_path(), path).string();
     }
 
-    bool file_exists = Core::File::exists(path);
+    bool file_exists = Core::DeprecatedFile::exists(path);
 
     if (!file_exists && (m_mode == Mode::Open || m_mode == Mode::OpenFolder)) {
         MessageBox::show(this, DeprecatedString::formatted("No such file or directory: {}", m_filename_textbox->text()), "File not found"sv, MessageBox::Type::Error, MessageBox::InputType::OK);

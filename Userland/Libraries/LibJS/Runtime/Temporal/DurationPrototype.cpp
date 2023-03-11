@@ -27,7 +27,7 @@ ThrowCompletionOr<void> DurationPrototype::initialize(Realm& realm)
     auto& vm = this->vm();
 
     // 7.3.2 Temporal.Duration.prototype[ @@toStringTag ], https://tc39.es/proposal-temporal/#sec-temporal.duration.prototype-@@tostringtag
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Temporal.Duration"), Attribute::Configurable);
+    define_direct_property(*vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Temporal.Duration"sv)), Attribute::Configurable);
 
     define_native_accessor(realm, vm.names.years, years_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.months, months_getter, {}, Attribute::Configurable);
@@ -369,7 +369,7 @@ JS_DEFINE_NATIVE_FUNCTION(DurationPrototype::round)
         smallest_unit_present = false;
 
         // b. Set smallestUnit to "nanosecond".
-        smallest_unit = TRY_OR_THROW_OOM(vm, String::from_utf8("nanosecond"sv));
+        smallest_unit = TRY_OR_THROW_OOM(vm, "nanosecond"_string);
     }
 
     // 10. Let defaultLargestUnit be ! DefaultTemporalLargestUnit(duration.[[Years]], duration.[[Months]], duration.[[Weeks]], duration.[[Days]], duration.[[Hours]], duration.[[Minutes]], duration.[[Seconds]], duration.[[Milliseconds]], duration.[[Microseconds]]).

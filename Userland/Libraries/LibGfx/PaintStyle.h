@@ -43,9 +43,9 @@ private:
 
 class SolidColorPaintStyle final : public PaintStyle {
 public:
-    static NonnullRefPtr<SolidColorPaintStyle> create(Color color)
+    static ErrorOr<NonnullRefPtr<SolidColorPaintStyle>> create(Color color)
     {
-        return adopt_ref(*new SolidColorPaintStyle(color));
+        return adopt_nonnull_ref_or_enomem(new (nothrow) SolidColorPaintStyle(color));
     }
 
     virtual Color sample_color(IntPoint) const override { return m_color; }
@@ -61,16 +61,17 @@ private:
 
 class GradientPaintStyle : public PaintStyle {
 public:
-    void add_color_stop(float position, Color color, Optional<float> transition_hint = {})
+    ErrorOr<void> add_color_stop(float position, Color color, Optional<float> transition_hint = {})
     {
-        add_color_stop(ColorStop { color, position, transition_hint });
+        return add_color_stop(ColorStop { color, position, transition_hint });
     }
 
-    void add_color_stop(ColorStop stop, bool sort = true)
+    ErrorOr<void> add_color_stop(ColorStop stop, bool sort = true)
     {
-        m_color_stops.append(stop);
+        TRY(m_color_stops.try_append(stop));
         if (sort)
             quick_sort(m_color_stops, [](auto& a, auto& b) { return a.position < b.position; });
+        return {};
     }
 
     void set_repeat_length(float repeat_length)
@@ -78,7 +79,7 @@ public:
         m_repeat_length = repeat_length;
     }
 
-    Span<ColorStop const> color_stops() const { return m_color_stops; }
+    ReadonlySpan<ColorStop> color_stops() const { return m_color_stops; }
     Optional<float> repeat_length() const { return m_repeat_length; }
 
 private:
@@ -91,9 +92,9 @@ private:
 
 class LinearGradientPaintStyle final : public GradientPaintStyle {
 public:
-    static NonnullRefPtr<LinearGradientPaintStyle> create(float angle = 0.0f)
+    static ErrorOr<ErrorOr<NonnullRefPtr<LinearGradientPaintStyle>>> create(float angle = 0.0f)
     {
-        return adopt_ref(*new LinearGradientPaintStyle(angle));
+        return adopt_nonnull_ref_or_enomem(new (nothrow) LinearGradientPaintStyle(angle));
     }
 
 private:
@@ -109,9 +110,9 @@ private:
 
 class ConicGradientPaintStyle final : public GradientPaintStyle {
 public:
-    static NonnullRefPtr<ConicGradientPaintStyle> create(IntPoint center, float start_angle = 0.0f)
+    static ErrorOr<NonnullRefPtr<ConicGradientPaintStyle>> create(IntPoint center, float start_angle = 0.0f)
     {
-        return adopt_ref(*new ConicGradientPaintStyle(center, start_angle));
+        return adopt_nonnull_ref_or_enomem(new (nothrow) ConicGradientPaintStyle(center, start_angle));
     }
 
 private:
@@ -129,9 +130,9 @@ private:
 
 class RadialGradientPaintStyle final : public GradientPaintStyle {
 public:
-    static NonnullRefPtr<RadialGradientPaintStyle> create(IntPoint center, IntSize size)
+    static ErrorOr<NonnullRefPtr<RadialGradientPaintStyle>> create(IntPoint center, IntSize size)
     {
-        return adopt_ref(*new RadialGradientPaintStyle(center, size));
+        return adopt_nonnull_ref_or_enomem(new (nothrow) RadialGradientPaintStyle(center, size));
     }
 
 private:
@@ -153,9 +154,9 @@ private:
 
 class CanvasLinearGradientPaintStyle final : public GradientPaintStyle {
 public:
-    static NonnullRefPtr<CanvasLinearGradientPaintStyle> create(FloatPoint p0, FloatPoint p1)
+    static ErrorOr<NonnullRefPtr<CanvasLinearGradientPaintStyle>> create(FloatPoint p0, FloatPoint p1)
     {
-        return adopt_ref(*new CanvasLinearGradientPaintStyle(p0, p1));
+        return adopt_nonnull_ref_or_enomem(new (nothrow) CanvasLinearGradientPaintStyle(p0, p1));
     }
 
 private:
@@ -173,9 +174,9 @@ private:
 
 class CanvasConicGradientPaintStyle final : public GradientPaintStyle {
 public:
-    static NonnullRefPtr<CanvasConicGradientPaintStyle> create(FloatPoint center, float start_angle = 0.0f)
+    static ErrorOr<NonnullRefPtr<CanvasConicGradientPaintStyle>> create(FloatPoint center, float start_angle = 0.0f)
     {
-        return adopt_ref(*new CanvasConicGradientPaintStyle(center, start_angle));
+        return adopt_nonnull_ref_or_enomem(new (nothrow) CanvasConicGradientPaintStyle(center, start_angle));
     }
 
 private:
@@ -193,9 +194,9 @@ private:
 
 class CanvasRadialGradientPaintStyle final : public GradientPaintStyle {
 public:
-    static NonnullRefPtr<CanvasRadialGradientPaintStyle> create(FloatPoint start_center, float start_radius, FloatPoint end_center, float end_radius)
+    static ErrorOr<NonnullRefPtr<CanvasRadialGradientPaintStyle>> create(FloatPoint start_center, float start_radius, FloatPoint end_center, float end_radius)
     {
-        return adopt_ref(*new CanvasRadialGradientPaintStyle(start_center, start_radius, end_center, end_radius));
+        return adopt_nonnull_ref_or_enomem(new (nothrow) CanvasRadialGradientPaintStyle(start_center, start_radius, end_center, end_radius));
     }
 
 private:

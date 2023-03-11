@@ -31,14 +31,16 @@ Vector<URL> MimeData::urls() const
     return urls;
 }
 
-void MimeData::set_urls(Vector<URL> const& urls)
+ErrorOr<void> MimeData::set_urls(Vector<URL> const& urls)
 {
     StringBuilder builder;
     for (auto& url : urls) {
-        builder.append(url.to_deprecated_string());
-        builder.append('\n');
+        TRY(builder.try_append(url.to_deprecated_string()));
+        TRY(builder.try_append('\n'));
     }
-    set_data("text/uri-list", builder.to_byte_buffer());
+    set_data("text/uri-list", TRY(builder.to_byte_buffer()));
+
+    return {};
 }
 
 DeprecatedString MimeData::text() const
@@ -73,6 +75,8 @@ StringView guess_mime_type_based_on_filename(StringView path)
         return "image/svg+xml"sv;
     if (path.ends_with(".tga"sv, CaseSensitivity::CaseInsensitive))
         return "image/x-targa"sv;
+    if (path.ends_with(".webp"sv, CaseSensitivity::CaseInsensitive))
+        return "image/webp"sv;
     if (path.ends_with(".md"sv, CaseSensitivity::CaseInsensitive))
         return "text/markdown"sv;
     if (path.ends_with(".html"sv, CaseSensitivity::CaseInsensitive) || path.ends_with(".htm"sv, CaseSensitivity::CaseInsensitive))
@@ -141,6 +145,7 @@ StringView guess_mime_type_based_on_filename(StringView path)
     __ENUMERATE_MIME_TYPE_HEADER(png, "image/png", 0, 8, 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A)                                            \
     __ENUMERATE_MIME_TYPE_HEADER(ppm, "image/x-portable-pixmap", 0, 3, 0x50, 0x33, 0x0A)                                                         \
     __ENUMERATE_MIME_TYPE_HEADER(qcow, "extra/qcow", 0, 3, 'Q', 'F', 'I')                                                                        \
+    __ENUMERATE_MIME_TYPE_HEADER(qoa, "audio/qoa", 0, 4, 'q', 'o', 'a', 'f')                                                                     \
     __ENUMERATE_MIME_TYPE_HEADER(qoi, "image/x-qoi", 0, 4, 'q', 'o', 'i', 'f')                                                                   \
     __ENUMERATE_MIME_TYPE_HEADER(rtf, "application/rtf", 0, 6, 0x7B, 0x5C, 0x72, 0x74, 0x66, 0x31)                                               \
     __ENUMERATE_MIME_TYPE_HEADER(sevenzip, "application/x-7z-compressed", 0, 6, 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C)                              \
@@ -152,6 +157,7 @@ StringView guess_mime_type_based_on_filename(StringView path)
     __ENUMERATE_MIME_TYPE_HEADER(tiff_bigendian, "image/tiff", 0, 4, 'M', 'M', 0x00, '*')                                                        \
     __ENUMERATE_MIME_TYPE_HEADER(wasm, "application/wasm", 0, 4, 0x00, 'a', 's', 'm')                                                            \
     __ENUMERATE_MIME_TYPE_HEADER(wav, "audio/wave", 8, 4, 'W', 'A', 'V', 'E')                                                                    \
+    __ENUMERATE_MIME_TYPE_HEADER(webp, "image/webp", 8, 4, 'W', 'E', 'B', 'P')                                                                   \
     __ENUMERATE_MIME_TYPE_HEADER(win_31x_archive, "extra/win-31x-compressed", 0, 4, 'K', 'W', 'A', 'J')                                          \
     __ENUMERATE_MIME_TYPE_HEADER(win_95_archive, "extra/win-95-compressed", 0, 4, 'S', 'Z', 'D', 'D')                                            \
     __ENUMERATE_MIME_TYPE_HEADER(zlib_0, "extra/raw-zlib", 0, 2, 0x78, 0x01)                                                                     \

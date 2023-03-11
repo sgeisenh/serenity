@@ -20,6 +20,7 @@
 #include <AK/Traits.h>
 #include <AK/Types.h>
 #include <AK/UnicodeUtils.h>
+#include <AK/Utf8View.h>
 #include <AK/Vector.h>
 
 namespace AK {
@@ -28,8 +29,8 @@ namespace Detail {
 class StringData;
 }
 
-// FIXME: Remove this when Apple Clang fully supports consteval.
-#if defined(AK_OS_MACOS)
+// FIXME: Remove this when Apple Clang and OpenBSD Clang fully supports consteval.
+#if defined(AK_OS_MACOS) || defined(AK_OS_OPENBSD)
 #    define AK_SHORT_STRING_CONSTEVAL constexpr
 #else
 #    define AK_SHORT_STRING_CONSTEVAL consteval
@@ -64,11 +65,15 @@ public:
     // Creates a new String from a sequence of UTF-8 encoded code points.
     static ErrorOr<String> from_utf8(StringView);
 
+    // Creates a new String by reading byte_count bytes from a UTF-8 encoded Stream.
+    static ErrorOr<String> from_stream(Stream&, size_t byte_count);
+
     // Creates a new String from a short sequence of UTF-8 encoded code points. If the provided string
     // does not fit in the short string storage, a compilation error will be emitted.
     static AK_SHORT_STRING_CONSTEVAL String from_utf8_short_string(StringView string)
     {
         VERIFY(string.length() <= MAX_SHORT_STRING_BYTE_COUNT);
+        VERIFY(Utf8View { string }.validate());
 
         ShortString short_string;
         for (size_t i = 0; i < string.length(); ++i)
@@ -104,7 +109,13 @@ public:
     ErrorOr<String> to_casefold() const;
 
     // Compare this String against another string with caseless matching. Using this method requires linking LibUnicode into your application.
-    ErrorOr<bool> equals_ignoring_case(String const&) const;
+    [[nodiscard]] bool equals_ignoring_case(String const&) const;
+
+    [[nodiscard]] bool starts_with(u32 code_point) const;
+    [[nodiscard]] bool starts_with_bytes(StringView) const;
+
+    [[nodiscard]] bool ends_with(u32 code_point) const;
+    [[nodiscard]] bool ends_with_bytes(StringView) const;
 
     // Creates a substring with a deep copy of the specified data window.
     ErrorOr<String> substring_from_byte_offset(size_t start, size_t byte_count) const;
@@ -161,7 +172,7 @@ public:
     }
 
     [[nodiscard]] bool contains(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
-    [[nodiscard]] bool contains(char, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
+    [[nodiscard]] bool contains(u32, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
 
     [[nodiscard]] u32 hash() const;
 
@@ -202,6 +213,7 @@ public:
 
     [[nodiscard]] static String fly_string_data_to_string(Badge<FlyString>, uintptr_t const&);
     [[nodiscard]] static StringView fly_string_data_to_string_view(Badge<FlyString>, uintptr_t const&);
+    [[nodiscard]] static u32 fly_string_data_to_hash(Badge<FlyString>, uintptr_t const&);
     [[nodiscard]] uintptr_t to_fly_string_data(Badge<FlyString>) const;
 
     static void ref_fly_string_data(Badge<FlyString>, uintptr_t);
@@ -230,7 +242,7 @@ private:
         u8 storage[MAX_SHORT_STRING_BYTE_COUNT] = { 0 };
     };
 
-    explicit String(NonnullRefPtr<Detail::StringData>);
+    explicit String(NonnullRefPtr<Detail::StringData const>);
 
     explicit constexpr String(ShortString short_string)
         : m_short_string(short_string)
@@ -241,7 +253,7 @@ private:
 
     union {
         ShortString m_short_string;
-        Detail::StringData* m_data { nullptr };
+        Detail::StringData const* m_data { nullptr };
     };
 };
 
@@ -255,4 +267,14 @@ struct Formatter<String> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder&, String const&);
 };
 
+}
+
+[[nodiscard]] ALWAYS_INLINE AK::ErrorOr<AK::String> operator""_string(char const* cstring, size_t length)
+{
+    return AK::String::from_utf8(AK::StringView(cstring, length));
+}
+
+[[nodiscard]] ALWAYS_INLINE AK_SHORT_STRING_CONSTEVAL AK::String operator""_short_string(char const* cstring, size_t length)
+{
+    return AK::String::from_utf8_short_string(AK::StringView(cstring, length));
 }

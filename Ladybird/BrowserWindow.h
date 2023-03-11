@@ -8,7 +8,6 @@
 #pragma once
 
 #include "Tab.h"
-#include <AK/NonnullOwnPtrVector.h>
 #include <LibCore/Forward.h>
 #include <QIcon>
 #include <QLineEdit>
@@ -54,11 +53,17 @@ public slots:
     void select_all();
     void copy_selected_text();
 
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override;
+
 private:
+    virtual void resizeEvent(QResizeEvent*) override;
+    virtual void moveEvent(QMoveEvent*) override;
+
     void debug_request(DeprecatedString const& request, DeprecatedString const& argument = "");
 
     QTabWidget* m_tabs_container { nullptr };
-    NonnullOwnPtrVector<Tab> m_tabs;
+    Vector<NonnullOwnPtr<Tab>> m_tabs;
     Tab* m_current_tab { nullptr };
 
     Browser::CookieJar& m_cookie_jar;

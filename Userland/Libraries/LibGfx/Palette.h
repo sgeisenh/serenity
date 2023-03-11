@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2022, Filiph Sandström <filiph.sandstrom@filfatstudios.com>
  *
@@ -59,7 +59,7 @@ private:
 class Palette {
 
 public:
-    explicit Palette(PaletteImpl const&);
+    explicit Palette(PaletteImpl&);
     ~Palette() = default;
 
     Color accent() const { return color(ColorRole::Accent); }
@@ -181,6 +181,7 @@ public:
     DeprecatedString menu_shadow_path() const { return path(PathRole::MenuShadow); }
     DeprecatedString taskbar_shadow_path() const { return path(PathRole::TaskbarShadow); }
     DeprecatedString tooltip_shadow_path() const { return path(PathRole::TooltipShadow); }
+    DeprecatedString color_scheme_path() const { return path(PathRole::ColorScheme); }
 
     Color color(ColorRole role) const { return m_impl->color(role); }
     Gfx::TextAlignment alignment(AlignmentRole role) const { return m_impl->alignment(role); }

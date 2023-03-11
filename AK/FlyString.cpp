@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/DeprecatedFlyString.h>
 #include <AK/FlyString.h>
 #include <AK/HashMap.h>
 #include <AK/Singleton.h>
@@ -53,6 +54,12 @@ FlyString::FlyString(String const& string)
     String::ref_fly_string_data({}, m_data);
 }
 
+FlyString& FlyString::operator=(String const& string)
+{
+    *this = FlyString { string };
+    return *this;
+}
+
 FlyString::FlyString(FlyString const& other)
     : m_data(other.m_data)
 {
@@ -90,7 +97,7 @@ bool FlyString::is_empty() const
 
 unsigned FlyString::hash() const
 {
-    return bytes_as_string_view().hash();
+    return String::fly_string_data_to_hash({}, m_data);
 }
 
 FlyString::operator String() const
@@ -156,14 +163,31 @@ size_t FlyString::number_of_fly_strings()
     return all_fly_strings().size();
 }
 
+DeprecatedFlyString FlyString::to_deprecated_fly_string() const
+{
+    return DeprecatedFlyString(bytes_as_string_view());
+}
+
+ErrorOr<FlyString> FlyString::from_deprecated_fly_string(DeprecatedFlyString const& deprecated_fly_string)
+{
+    return FlyString::from_utf8(deprecated_fly_string.view());
+}
+
 unsigned Traits<FlyString>::hash(FlyString const& fly_string)
 {
-    return fly_string.bytes_as_string_view().hash();
+    return fly_string.hash();
 }
 
 ErrorOr<void> Formatter<FlyString>::format(FormatBuilder& builder, FlyString const& fly_string)
 {
     return Formatter<StringView>::format(builder, fly_string.bytes_as_string_view());
+}
+
+bool FlyString::equals_ignoring_ascii_case(FlyString const& other) const
+{
+    if (*this == other)
+        return true;
+    return StringUtils::equals_ignoring_ascii_case(bytes_as_string_view(), other.bytes_as_string_view());
 }
 
 }

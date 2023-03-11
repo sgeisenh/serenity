@@ -7,13 +7,13 @@
 
 #pragma once
 
-#include "Common.h"
 #include "PlaybackManager.h"
 #include "Player.h"
 #include "VisualizationWidget.h"
 #include <AK/FixedArray.h>
 #include <AK/NonnullRefPtr.h>
 #include <LibAudio/ConnectionToServer.h>
+#include <LibGUI/Slider.h>
 #include <LibGUI/Splitter.h>
 #include <LibGUI/Widget.h>
 
@@ -71,13 +71,16 @@ private:
     RefPtr<Gfx::Bitmap> m_stop_icon;
     RefPtr<Gfx::Bitmap> m_back_icon;
     RefPtr<Gfx::Bitmap> m_next_icon;
+    RefPtr<Gfx::Bitmap> m_volume_icon;
+    RefPtr<Gfx::Bitmap> m_muted_icon;
 
     RefPtr<GUI::Action> m_play_action;
     RefPtr<GUI::Action> m_stop_action;
     RefPtr<GUI::Action> m_back_action;
     RefPtr<GUI::Action> m_next_action;
+    RefPtr<GUI::Action> m_mute_action;
 
-    RefPtr<AutoSlider> m_playback_progress_slider;
+    RefPtr<GUI::HorizontalSlider> m_playback_progress_slider;
     RefPtr<GUI::Label> m_volume_label;
     RefPtr<GUI::HorizontalSlider> m_volume_slider;
     RefPtr<GUI::Label> m_timestamp_label;

@@ -9,7 +9,7 @@
 #include <AK/SourceGenerator.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibIDL/IDLParser.h>
 #include <LibIDL/Types.h>
 #include <LibMain/Main.h>
@@ -89,12 +89,6 @@ class @legacy_constructor_class@;)~~~");
         add_interface(gen, interface.prototype_class, interface.constructor_class, lookup_legacy_constructor(interface));
     }
 
-    // FIXME: Special case window. We should convert Window to use IDL.
-    {
-        auto gen = generator.fork();
-        add_interface(gen, "WindowPrototype"sv, "WindowConstructor"sv, {});
-    }
-
     // FIXME: Special case WebAssembly. We should convert WASM to use IDL.
     {
         auto gen = generator.fork();
@@ -110,7 +104,7 @@ class @legacy_constructor_class@;)~~~");
 )~~~");
 
     auto generated_forward_path = LexicalPath(output_path).append("Forward.h"sv).string();
-    auto generated_forward_file = TRY(Core::Stream::File::open(generated_forward_path, Core::Stream::OpenMode::Write));
+    auto generated_forward_file = TRY(Core::File::open(generated_forward_path, Core::File::OpenMode::Write));
     TRY(generated_forward_file->write(generator.as_string_view().bytes()));
 
     return {};
@@ -141,11 +135,6 @@ static ErrorOr<void> generate_intrinsic_definitions(StringView output_path, Vect
 #include <LibWeb/Bindings/@legacy_constructor_class@.h>)~~~");
         }
     }
-
-    // FIXME: Special case window. We should convert Window to use IDL.
-    generator.append(R"~~~(
-#include <LibWeb/Bindings/WindowConstructor.h>
-#include <LibWeb/Bindings/WindowPrototype.h>)~~~");
 
     // FIXME: Special case WebAssembly. We should convert WASM to use IDL.
     generator.append(R"~~~(
@@ -181,7 +170,7 @@ void Intrinsics::create_web_prototype_and_constructor<@prototype_class@>(JS::Rea
     m_constructors.set("@interface_name@"sv, constructor);
 
     prototype->define_direct_property(vm.names.constructor, constructor.ptr(), JS::Attribute::Writable | JS::Attribute::Configurable);
-    constructor->define_direct_property(vm.names.name, JS::PrimitiveString::create(vm, "@interface_name@"sv), JS::Attribute::Configurable);
+    constructor->define_direct_property(vm.names.name, JS::PrimitiveString::create(vm, "@interface_name@"sv).release_allocated_value_but_fixme_should_propagate_errors(), JS::Attribute::Configurable);
 )~~~");
 
         if (legacy_constructor.has_value()) {
@@ -191,7 +180,7 @@ void Intrinsics::create_web_prototype_and_constructor<@prototype_class@>(JS::Rea
     auto legacy_constructor = heap().allocate<@legacy_constructor_class@>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
     m_constructors.set("@legacy_interface_name@"sv, legacy_constructor);
 
-    legacy_constructor->define_direct_property(vm.names.name, JS::PrimitiveString::create(vm, "@legacy_interface_name@"sv), JS::Attribute::Configurable);)~~~");
+    legacy_constructor->define_direct_property(vm.names.name, JS::PrimitiveString::create(vm, "@legacy_interface_name@"sv).release_allocated_value_but_fixme_should_propagate_errors(), JS::Attribute::Configurable);)~~~");
         }
 
         gen.append(R"~~~(
@@ -202,12 +191,6 @@ void Intrinsics::create_web_prototype_and_constructor<@prototype_class@>(JS::Rea
     for (auto& interface : exposed_interfaces) {
         auto gen = generator.fork();
         add_interface(gen, interface.name, interface.prototype_class, interface.constructor_class, lookup_legacy_constructor(interface));
-    }
-
-    // FIXME: Special case window. We should convert Window to use IDL
-    {
-        auto gen = generator.fork();
-        add_interface(gen, "Window"sv, "WindowPrototype"sv, "WindowConstructor"sv, {});
     }
 
     // FIXME: Special case WebAssembly. We should convert WASM to use IDL.
@@ -224,7 +207,7 @@ void Intrinsics::create_web_prototype_and_constructor<@prototype_class@>(JS::Rea
 )~~~");
 
     auto generated_intrinsics_path = LexicalPath(output_path).append("IntrinsicDefinitions.cpp"sv).string();
-    auto generated_intrinsics_file = TRY(Core::Stream::File::open(generated_intrinsics_path, Core::Stream::OpenMode::Write));
+    auto generated_intrinsics_file = TRY(Core::File::open(generated_intrinsics_path, Core::File::OpenMode::Write));
     TRY(generated_intrinsics_file->write(generator.as_string_view().bytes()));
 
     return {};
@@ -250,7 +233,7 @@ void add_@global_object_snake_name@_exposed_interfaces(JS::Object&);
 )~~~");
 
     auto generated_header_path = LexicalPath(output_path).append(DeprecatedString::formatted("{}ExposedInterfaces.h", class_name)).string();
-    auto generated_header_file = TRY(Core::Stream::File::open(generated_header_path, Core::Stream::OpenMode::Write));
+    auto generated_header_file = TRY(Core::File::open(generated_header_path, Core::File::OpenMode::Write));
     TRY(generated_header_file->write(generator.as_string_view().bytes()));
 
     return {};
@@ -285,13 +268,6 @@ static ErrorOr<void> generate_exposed_interface_implementation(StringView class_
         }
     }
 
-    // FIXME: Special case window. We should convert Window to use IDL
-    if (class_name == "Window"sv) {
-        generator.append(R"~~~(#include <LibWeb/Bindings/WindowConstructor.h>
-#include <LibWeb/Bindings/WindowPrototype.h>
-)~~~");
-    }
-
     generator.append(R"~~~(
 namespace Web::Bindings {
 
@@ -319,12 +295,6 @@ void add_@global_object_snake_name@_exposed_interfaces(JS::Object& global)
         add_interface(gen, interface.name, interface.prototype_class, lookup_legacy_constructor(interface));
     }
 
-    // FIXME: Special case window. We should convert Window to use IDL
-    if (class_name == "Window"sv) {
-        auto gen = generator.fork();
-        add_interface(gen, "Window"sv, "WindowPrototype"sv, {});
-    }
-
     generator.append(R"~~~(
 }
 
@@ -332,7 +302,7 @@ void add_@global_object_snake_name@_exposed_interfaces(JS::Object& global)
 )~~~");
 
     auto generated_implementation_path = LexicalPath(output_path).append(DeprecatedString::formatted("{}ExposedInterfaces.cpp", class_name)).string();
-    auto generated_implementation_file = TRY(Core::Stream::File::open(generated_implementation_path, Core::Stream::OpenMode::Write));
+    auto generated_implementation_file = TRY(Core::File::open(generated_implementation_path, Core::File::OpenMode::Write));
     TRY(generated_implementation_file->write(generator.as_string_view().bytes()));
 
     return {};
@@ -359,7 +329,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     // Read in all IDL files, we must own the storage for all of these for the lifetime of the program
     Vector<DeprecatedString> file_contents;
     for (DeprecatedString const& path : paths) {
-        auto file_or_error = Core::Stream::File::open(path, Core::Stream::OpenMode::Read);
+        auto file_or_error = Core::File::open(path, Core::File::OpenMode::Read);
         if (file_or_error.is_error()) {
             s_error_string = DeprecatedString::formatted("Unable to open file {}", path);
             return Error::from_string_view(s_error_string);

@@ -8,9 +8,8 @@
 #include <AK/FuzzyMatch.h>
 #include <AK/LexicalPath.h>
 #include <AK/URL.h>
-#include <LibCore/DirIterator.h>
+#include <LibCore/Directory.h>
 #include <LibCore/ElapsedTimer.h>
-#include <LibCore/File.h>
 #include <LibCore/Process.h>
 #include <LibCore/StandardPaths.h>
 #include <LibDesktop/Launcher.h>
@@ -23,6 +22,7 @@
 #include <fcntl.h>
 #include <serenity.h>
 #include <spawn.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace Assistant {
@@ -34,7 +34,8 @@ void AppResult::activate() const
         exit(1);
     }
 
-    m_app_file->spawn();
+    auto arguments_list = m_arguments.split_view(' ');
+    m_app_file->spawn(arguments_list.span());
 }
 
 void CalculatorResult::activate() const
@@ -60,26 +61,29 @@ void URLResult::activate() const
     Desktop::Launcher::open(URL::create_with_url_or_path(title()));
 }
 
-void AppProvider::query(DeprecatedString const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete)
+void AppProvider::query(DeprecatedString const& query, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete)
 {
     if (query.starts_with('=') || query.starts_with('$'))
         return;
 
-    NonnullRefPtrVector<Result> results;
+    Vector<NonnullRefPtr<Result>> results;
 
     Desktop::AppFile::for_each([&](NonnullRefPtr<Desktop::AppFile> app_file) {
-        auto match_result = fuzzy_match(query, app_file->name());
+        auto query_and_arguments = query.split_limit(' ', 2);
+        auto app_name = query_and_arguments.is_empty() ? query : query_and_arguments[0];
+        auto arguments = query_and_arguments.size() < 2 ? DeprecatedString::empty() : query_and_arguments[1];
+        auto match_result = fuzzy_match(app_name, app_file->name());
         if (!match_result.matched)
             return;
 
         auto icon = GUI::FileIconProvider::icon_for_executable(app_file->executable());
-        results.append(adopt_ref(*new AppResult(icon.bitmap_for_size(16), app_file->name(), {}, app_file, match_result.score)));
+        results.append(adopt_ref(*new AppResult(icon.bitmap_for_size(16), app_file->name(), {}, app_file, arguments, match_result.score)));
     });
 
     on_complete(move(results));
 }
 
-void CalculatorProvider::query(DeprecatedString const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete)
+void CalculatorProvider::query(DeprecatedString const& query, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete)
 {
     if (!query.starts_with('='))
         return;
@@ -101,10 +105,10 @@ void CalculatorProvider::query(DeprecatedString const& query, Function<void(Nonn
     if (!result.is_number()) {
         calculation = "0";
     } else {
-        calculation = result.to_string_without_side_effects();
+        calculation = result.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
     }
 
-    NonnullRefPtrVector<Result> results;
+    Vector<NonnullRefPtr<Result>> results;
     results.append(adopt_ref(*new CalculatorResult(calculation)));
     on_complete(move(results));
 }
@@ -119,16 +123,16 @@ FileProvider::FileProvider()
     build_filesystem_cache();
 }
 
-void FileProvider::query(DeprecatedString const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete)
+void FileProvider::query(DeprecatedString const& query, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete)
 {
     build_filesystem_cache();
 
     if (m_fuzzy_match_work)
         m_fuzzy_match_work->cancel();
 
-    m_fuzzy_match_work = Threading::BackgroundAction<Optional<NonnullRefPtrVector<Result>>>::construct(
-        [this, query](auto& task) -> Optional<NonnullRefPtrVector<Result>> {
-            NonnullRefPtrVector<Result> results;
+    m_fuzzy_match_work = Threading::BackgroundAction<Optional<Vector<NonnullRefPtr<Result>>>>::construct(
+        [this, query](auto& task) -> Optional<Vector<NonnullRefPtr<Result>>> {
+            Vector<NonnullRefPtr<Result>> results;
 
             for (auto& path : m_full_path_cache) {
                 if (task.is_cancelled())
@@ -170,27 +174,25 @@ void FileProvider::build_filesystem_cache()
                 if (base_directory.template is_one_of("/dev"sv, "/proc"sv, "/sys"sv))
                     continue;
 
-                Core::DirIterator di(base_directory, Core::DirIterator::SkipDots);
-
-                while (di.has_next()) {
-                    auto path = di.next_path();
+                // FIXME: Propagate errors.
+                (void)Core::Directory::for_each_entry(base_directory, Core::DirIterator::SkipDots, [&](auto const& entry, auto const& directory) -> ErrorOr<IterationDecision> {
                     struct stat st = {};
-                    if (fstatat(di.fd(), path.characters(), &st, AT_SYMLINK_NOFOLLOW) < 0) {
+                    if (fstatat(directory.fd(), entry.name.characters(), &st, AT_SYMLINK_NOFOLLOW) < 0) {
                         perror("fstatat");
-                        continue;
+                        return IterationDecision::Continue;
                     }
 
                     if (S_ISLNK(st.st_mode))
-                        continue;
+                        return IterationDecision::Continue;
 
-                    auto full_path = LexicalPath::join(slash, base_directory, path).string();
-
+                    auto full_path = LexicalPath::join(directory.path().string(), entry.name).string();
                     m_full_path_cache.append(full_path);
 
                     if (S_ISDIR(st.st_mode)) {
                         m_work_queue.enqueue(full_path);
                     }
-                }
+                    return IterationDecision::Continue;
+                });
             }
             dbgln("Built cache in {} ms", timer.elapsed());
             return 0;
@@ -201,19 +203,19 @@ void FileProvider::build_filesystem_cache()
         });
 }
 
-void TerminalProvider::query(DeprecatedString const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete)
+void TerminalProvider::query(DeprecatedString const& query, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete)
 {
     if (!query.starts_with('$'))
         return;
 
     auto command = query.substring(1).trim_whitespace();
 
-    NonnullRefPtrVector<Result> results;
+    Vector<NonnullRefPtr<Result>> results;
     results.append(adopt_ref(*new TerminalResult(move(command))));
     on_complete(move(results));
 }
 
-void URLProvider::query(DeprecatedString const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete)
+void URLProvider::query(DeprecatedString const& query, Function<void(Vector<NonnullRefPtr<Result>>)> on_complete)
 {
     if (query.is_empty() || query.starts_with('=') || query.starts_with('$'))
         return;
@@ -230,7 +232,7 @@ void URLProvider::query(DeprecatedString const& query, Function<void(NonnullRefP
     if (!url.is_valid())
         return;
 
-    NonnullRefPtrVector<Result> results;
+    Vector<NonnullRefPtr<Result>> results;
     results.append(adopt_ref(*new URLResult(url)));
     on_complete(results);
 }

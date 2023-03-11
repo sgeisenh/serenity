@@ -223,6 +223,8 @@ class File;
 }
 
 namespace Web::Geometry {
+class DOMMatrix;
+class DOMMatrixReadOnly;
 class DOMPoint;
 class DOMPointReadOnly;
 class DOMRect;
@@ -246,6 +248,8 @@ struct EnvironmentSettingsObject;
 class ErrorEvent;
 class EventHandler;
 class EventLoop;
+class FormDataEvent;
+class History;
 class HTMLAnchorElement;
 class HTMLAreaElement;
 class HTMLAudioElement;
@@ -325,11 +329,15 @@ class Location;
 class MessageChannel;
 class MessageEvent;
 class MessagePort;
+class MimeType;
+class MimeTypeArray;
 struct NavigationParams;
 class Navigator;
 class Origin;
 class PageTransitionEvent;
 class Path2D;
+class Plugin;
+class PluginArray;
 struct PolicyContainer;
 class PromiseRejectionEvent;
 class WorkerDebugConsoleClient;
@@ -444,7 +452,7 @@ class CheckBox;
 class FlexFormattingContext;
 class FormattingContext;
 struct LayoutState;
-class InitialContainingBlock;
+class Viewport;
 class InlineFormattingContext;
 class Label;
 class LabelableNode;
@@ -480,9 +488,12 @@ class WebGLRenderingContextBase;
 }
 
 namespace Web::XHR {
+class FormData;
+class FormDataIterator;
 class ProgressEvent;
 class XMLHttpRequest;
 class XMLHttpRequestEventTarget;
+class XMLHttpRequestUpload;
 }
 
 namespace Web::UIEvents {

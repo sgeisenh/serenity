@@ -8,7 +8,6 @@
 #pragma once
 
 #include <AK/HashMap.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/FileWatcher.h>
 #include <LibGUI/Model.h>
@@ -83,7 +82,7 @@ public:
         FileSystemModel& m_model;
 
         Node* m_parent { nullptr };
-        NonnullOwnPtrVector<Node> m_children;
+        Vector<NonnullOwnPtr<Node>> m_children;
         bool m_has_traversed { false };
 
         bool m_selected { false };

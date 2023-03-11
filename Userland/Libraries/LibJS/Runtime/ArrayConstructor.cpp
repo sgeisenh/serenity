@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -148,7 +148,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
     if (!mapfn_value.is_undefined()) {
         // a. If IsCallable(mapfn) is false, throw a TypeError exception.
         if (!mapfn_value.is_function())
-            return vm.throw_completion<TypeError>(ErrorType::NotAFunction, mapfn_value.to_string_without_side_effects());
+            return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, mapfn_value.to_string_without_side_effects()));
 
         // b. Let mapping be true.
         mapfn = &mapfn_value.as_function();
@@ -184,7 +184,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
                 auto error = vm.throw_completion<TypeError>(ErrorType::ArrayMaxSize);
 
                 // 2. Return ? IteratorClose(iteratorRecord, error).
-                return TRY(iterator_close(vm, iterator, move(error)));
+                return *TRY(iterator_close(vm, iterator, move(error)));
             }
 
             // ii. Let Pk be ! ToString(𝔽(k)).
@@ -214,7 +214,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
 
                 // 2. IfAbruptCloseIterator(mappedValue, iteratorRecord).
                 if (mapped_value_or_error.is_error())
-                    return TRY(iterator_close(vm, iterator, mapped_value_or_error.release_error()));
+                    return *TRY(iterator_close(vm, iterator, mapped_value_or_error.release_error()));
                 mapped_value = mapped_value_or_error.release_value();
             }
             // vii. Else, let mappedValue be nextValue.
@@ -227,7 +227,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
 
             // IfAbruptCloseIterator(defineStatus, iteratorRecord).
             if (result_or_error.is_error())
-                return TRY(iterator_close(vm, iterator, result_or_error.release_error()));
+                return *TRY(iterator_close(vm, iterator, result_or_error.release_error()));
 
             // x. Set k to k + 1.
         }

@@ -13,20 +13,20 @@
 #include <AK/RefPtr.h>
 #include <AK/Result.h>
 #include <AK/Span.h>
+#include <AK/Stream.h>
 #include <AK/StringView.h>
 #include <AK/Try.h>
 #include <LibAudio/GenericTypes.h>
 #include <LibAudio/LoaderError.h>
 #include <LibAudio/Sample.h>
 #include <LibAudio/SampleFormats.h>
-#include <LibCore/Stream.h>
 
 namespace Audio {
 
 static constexpr StringView no_plugin_error = "No loader plugin available"sv;
 
-using LoaderSamples = Result<FixedArray<Sample>, LoaderError>;
-using MaybeLoaderError = Result<void, LoaderError>;
+using LoaderSamples = ErrorOr<FixedArray<Sample>, LoaderError>;
+using MaybeLoaderError = ErrorOr<void, LoaderError>;
 
 class LoaderPlugin {
 public:

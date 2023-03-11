@@ -76,6 +76,7 @@ public:
     };
 
     void open_coredump(DeprecatedString const& coredump_path);
+    void debug_process(pid_t pid);
     void for_each_open_file(Function<void(ProjectFile const&)>);
     bool semantic_syntax_highlighting_is_enabled() const;
 
@@ -176,9 +177,9 @@ private:
     ProjectLocation current_project_location() const;
     void update_history_actions();
 
-    NonnullRefPtrVector<EditorWrapper> m_all_editor_wrappers;
+    Vector<NonnullRefPtr<EditorWrapper>> m_all_editor_wrappers;
     RefPtr<EditorWrapper> m_current_editor_wrapper;
-    NonnullRefPtrVector<GUI::TabWidget> m_all_editor_tab_widgets;
+    Vector<NonnullRefPtr<GUI::TabWidget>> m_all_editor_tab_widgets;
     RefPtr<GUI::TabWidget> m_current_editor_tab_widget;
 
     HashMap<DeprecatedString, NonnullRefPtr<ProjectFile>> m_open_files;
@@ -216,7 +217,7 @@ private:
     RefPtr<EditorWrapper> m_current_editor_in_execution;
     RefPtr<GUI::Menu> m_recent_projects_submenu { nullptr };
 
-    NonnullRefPtrVector<GUI::Action> m_new_file_actions;
+    Vector<NonnullRefPtr<GUI::Action>> m_new_file_actions;
     RefPtr<GUI::Action> m_new_plain_file_action;
 
     RefPtr<GUI::Action> m_new_directory_action;
@@ -248,11 +249,12 @@ private:
     RefPtr<GUI::Action> m_toggle_semantic_highlighting_action;
     RefPtr<GUI::Action> m_open_project_configuration_action;
 
-    RefPtr<Gfx::Font> read_editor_font_from_config();
-    void change_editor_font(RefPtr<Gfx::Font>);
-    RefPtr<Gfx::Font> m_editor_font;
+    RefPtr<Gfx::Font const> read_editor_font_from_config();
+    void change_editor_font(RefPtr<Gfx::Font const>);
+    RefPtr<Gfx::Font const> m_editor_font;
     RefPtr<GUI::Action> m_editor_font_action;
 
+    GUI::TextEditor::WrappingMode m_wrapping_mode { GUI::TextEditor::NoWrap };
     GUI::ActionGroup m_wrapping_mode_actions;
     RefPtr<GUI::Action> m_no_wrapping_action;
     RefPtr<GUI::Action> m_wrap_anywhere_action;

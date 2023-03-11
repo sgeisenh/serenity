@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
  * Copyright (c) 2022, Ali Mohammad Pur <mpfard@serenityos.org>
  *
@@ -12,7 +12,6 @@
 #include <AK/LexicalPath.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
-#include <LibCore/Stream.h>
 #include <LibIDL/IDLParser.h>
 #include <LibIDL/Types.h>
 
@@ -25,6 +24,8 @@ void generate_prototype_header(IDL::Interface const&, StringBuilder&);
 void generate_prototype_implementation(IDL::Interface const&, StringBuilder&);
 void generate_iterator_prototype_header(IDL::Interface const&, StringBuilder&);
 void generate_iterator_prototype_implementation(IDL::Interface const&, StringBuilder&);
+void generate_global_mixin_header(IDL::Interface const&, StringBuilder&);
+void generate_global_mixin_implementation(IDL::Interface const&, StringBuilder&);
 }
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
@@ -41,20 +42,24 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     bool prototype_implementation_mode = false;
     bool iterator_prototype_header_mode = false;
     bool iterator_prototype_implementation_mode = false;
+    bool global_mixin_header_mode = false;
+    bool global_mixin_implementation_mode = false;
     args_parser.add_option(constructor_header_mode, "Generate the constructor .h file", "constructor-header", 'C');
     args_parser.add_option(constructor_implementation_mode, "Generate the constructor .cpp file", "constructor-implementation", 'O');
     args_parser.add_option(prototype_header_mode, "Generate the prototype .h file", "prototype-header", 'P');
     args_parser.add_option(prototype_implementation_mode, "Generate the prototype .cpp file", "prototype-implementation", 'R');
     args_parser.add_option(iterator_prototype_header_mode, "Generate the iterator prototype .h file", "iterator-prototype-header", 0);
     args_parser.add_option(iterator_prototype_implementation_mode, "Generate the iterator prototype .cpp file", "iterator-prototype-implementation", 0);
+    args_parser.add_option(global_mixin_header_mode, "Generate the global object mixin .h file", "global-mixin-header", 0);
+    args_parser.add_option(global_mixin_implementation_mode, "Generate the global object mixin .cpp file", "global-mixin-implementation", 0);
     args_parser.add_option(Core::ArgsParser::Option {
         .argument_mode = Core::ArgsParser::OptionArgumentMode::Required,
         .help_string = "Add a header search path passed to the compiler",
         .long_name = "header-include-path",
         .short_name = 'i',
         .value_name = "path",
-        .accept_value = [&](char const* s) {
-            s_header_search_paths.append({ s, strlen(s) });
+        .accept_value = [&](StringView s) {
+            s_header_search_paths.append(s);
             return true;
         },
     });
@@ -65,7 +70,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_positional_argument(import_base_path, "Import base path", "import-base-path", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
 
-    auto file = TRY(Core::Stream::File::open(path, Core::Stream::OpenMode::Read));
+    auto file = TRY(Core::File::open(path, Core::File::OpenMode::Read));
 
     LexicalPath lexical_path(path);
     auto& namespace_ = lexical_path.parts_view().at(lexical_path.parts_view().size() - 2);
@@ -75,7 +80,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     if (import_base_path.is_null())
         import_base_path = lexical_path.dirname();
 
-    auto output_file = TRY(Core::Stream::File::open_file_or_standard_stream(output_path, Core::Stream::OpenMode::Write));
+    auto output_file = TRY(Core::File::open_file_or_standard_stream(output_path, Core::File::OpenMode::Write));
 
     IDL::Parser parser(path, data, import_base_path);
     auto& interface = parser.parse();
@@ -149,10 +154,16 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     if (iterator_prototype_implementation_mode)
         IDL::generate_iterator_prototype_implementation(interface, output_builder);
 
+    if (global_mixin_header_mode)
+        IDL::generate_global_mixin_header(interface, output_builder);
+
+    if (global_mixin_implementation_mode)
+        IDL::generate_global_mixin_implementation(interface, output_builder);
+
     TRY(output_file->write(output_builder.string_view().bytes()));
 
     if (!depfile_path.is_null()) {
-        auto depfile = TRY(Core::Stream::File::open_file_or_standard_stream(depfile_path, Core::Stream::OpenMode::Write));
+        auto depfile = TRY(Core::File::open_file_or_standard_stream(depfile_path, Core::File::OpenMode::Write));
 
         StringBuilder depfile_builder;
         depfile_builder.append(depfile_target.is_null() ? output_path : depfile_target);

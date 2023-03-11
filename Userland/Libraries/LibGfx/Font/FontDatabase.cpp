@@ -5,11 +5,10 @@
  */
 
 #include <AK/DeprecatedFlyString.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/Queue.h>
 #include <AK/QuickSort.h>
+#include <LibCore/DeprecatedFile.h>
 #include <LibCore/DirIterator.h>
-#include <LibCore/File.h>
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Font/OpenType/Font.h>
@@ -130,13 +129,13 @@ void FontDatabase::load_all_fonts_from_path(DeprecatedString const& root)
         auto current_directory = path_queue.dequeue();
         Core::DirIterator dir_iterator(current_directory, Core::DirIterator::SkipParentAndBaseDir);
         if (dir_iterator.has_error()) {
-            dbgln("FontDatabase::load_all_fonts_from_path: {}", dir_iterator.error_string());
+            dbgln("FontDatabase::load_all_fonts_from_path: {}", dir_iterator.error());
             continue;
         }
         while (dir_iterator.has_next()) {
             auto path = dir_iterator.next_full_path();
 
-            if (Core::File::is_directory(path)) {
+            if (Core::DeprecatedFile::is_directory(path)) {
                 path_queue.enqueue(path);
                 continue;
             }
@@ -206,7 +205,7 @@ RefPtr<Gfx::Font> FontDatabase::get_by_name(StringView name)
             auto weight = parts.take_last().to_int().value_or(0);
             auto size = parts.take_last().to_int().value_or(0);
             auto family = DeprecatedString::join(' ', parts);
-            return get(family, size, weight, slope);
+            return get(family, size, weight, Gfx::FontWidth::Normal, slope);
         }
         dbgln("Font lookup failed: '{}'", name);
         return nullptr;
@@ -214,13 +213,13 @@ RefPtr<Gfx::Font> FontDatabase::get_by_name(StringView name)
     return it->value;
 }
 
-RefPtr<Gfx::Font> FontDatabase::get(DeprecatedFlyString const& family, float point_size, unsigned weight, unsigned slope, Font::AllowInexactSizeMatch allow_inexact_size_match)
+RefPtr<Gfx::Font> FontDatabase::get(DeprecatedFlyString const& family, float point_size, unsigned weight, unsigned width, unsigned slope, Font::AllowInexactSizeMatch allow_inexact_size_match)
 {
     auto it = m_private->typefaces.find(family);
     if (it == m_private->typefaces.end())
         return nullptr;
     for (auto const& typeface : it->value) {
-        if (typeface->weight() == weight && typeface->slope() == slope)
+        if (typeface->weight() == weight && typeface->width() == width && typeface->slope() == slope)
             return typeface->get_font(point_size, allow_inexact_size_match);
     }
     return nullptr;

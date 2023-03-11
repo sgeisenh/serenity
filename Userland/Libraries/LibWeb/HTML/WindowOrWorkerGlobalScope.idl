@@ -1,3 +1,10 @@
+#import <Fetch/Request.idl>
+#import <Fetch/Response.idl>
+#import <HTML/MessagePort.idl>
+
+// FIXME: Support VoidFunction in the IDL parser
+callback VoidFunction = undefined ();
+
 // https://html.spec.whatwg.org/multipage/webappapis.html#windoworworkerglobalscope
 interface mixin WindowOrWorkerGlobalScope {
     [Replaceable] readonly attribute USVString origin;
@@ -17,12 +24,15 @@ interface mixin WindowOrWorkerGlobalScope {
     // FIXME: undefined clearInterval(optional long id = 0);
 
     // microtask queuing
-    // FIXME: undefined queueMicrotask(VoidFunction callback);
+    undefined queueMicrotask(VoidFunction callback);
 
     // ImageBitmap
     // FIXME: Promise<ImageBitmap> createImageBitmap(ImageBitmapSource image, optional ImageBitmapOptions options = {});
     // FIXME: Promise<ImageBitmap> createImageBitmap(ImageBitmapSource image, long sx, long sy, long sw, long sh, optional ImageBitmapOptions options = {});
 
     // structured cloning
-    // FIXME: any structuredClone(any value, optional StructuredSerializeOptions options = {});
+    any structuredClone(any value, optional StructuredSerializeOptions options = {});
+
+    // https://fetch.spec.whatwg.org/#fetch-method
+    [NewObject] Promise<Response> fetch(RequestInfo input, optional RequestInit init = {});
 };

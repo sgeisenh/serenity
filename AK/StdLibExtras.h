@@ -32,6 +32,9 @@ requires(AK::Detail::IsIntegral<T>)
     return value && !((value) & (value - 1));
 }
 
+template<typename... Args>
+void compiletime_fail(Args...);
+
 }
 
 #if !USING_AK_GLOBALLY || defined(AK_DONT_REPLACE_STD)
@@ -131,8 +134,8 @@ inline void swap(T& a, U& b)
 {
     if (&a == &b)
         return;
-    U tmp = move((U&)a);
-    a = (T &&) move(b);
+    U tmp = move(static_cast<U&>(a));
+    a = static_cast<T&&>(move(b));
     b = move(tmp);
 }
 

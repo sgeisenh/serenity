@@ -78,7 +78,7 @@ CSSPixels Length::relative_length_to_px(CSSPixelRect const& viewport_rect, Gfx::
     case Type::Em:
         return m_value * font_size;
     case Type::Ch:
-        // FIXME: Use layout_node.font().glyph_height() when writing-mode is not horizontal-tb (it has to be implemented first)
+        // FIXME: Use layout_node.font().pixel_size() when writing-mode is not horizontal-tb (it has to be implemented first)
         return m_value * (font_metrics.advance_of_ascii_zero + font_metrics.glyph_spacing);
     case Type::Rem:
         return m_value * root_font_size;
@@ -117,7 +117,7 @@ ErrorOr<String> Length::to_string() const
     if (is_calculated())
         return m_calculated_style->to_string();
     if (is_auto())
-        return String::from_utf8("auto"sv);
+        return "auto"_string;
     return String::formatted("{}{}", m_value, unit_name());
 }
 
@@ -164,35 +164,35 @@ char const* Length::unit_name() const
 
 Optional<Length::Type> Length::unit_from_name(StringView name)
 {
-    if (name.equals_ignoring_case("px"sv)) {
+    if (name.equals_ignoring_ascii_case("px"sv)) {
         return Length::Type::Px;
-    } else if (name.equals_ignoring_case("pt"sv)) {
+    } else if (name.equals_ignoring_ascii_case("pt"sv)) {
         return Length::Type::Pt;
-    } else if (name.equals_ignoring_case("pc"sv)) {
+    } else if (name.equals_ignoring_ascii_case("pc"sv)) {
         return Length::Type::Pc;
-    } else if (name.equals_ignoring_case("mm"sv)) {
+    } else if (name.equals_ignoring_ascii_case("mm"sv)) {
         return Length::Type::Mm;
-    } else if (name.equals_ignoring_case("rem"sv)) {
+    } else if (name.equals_ignoring_ascii_case("rem"sv)) {
         return Length::Type::Rem;
-    } else if (name.equals_ignoring_case("em"sv)) {
+    } else if (name.equals_ignoring_ascii_case("em"sv)) {
         return Length::Type::Em;
-    } else if (name.equals_ignoring_case("ex"sv)) {
+    } else if (name.equals_ignoring_ascii_case("ex"sv)) {
         return Length::Type::Ex;
-    } else if (name.equals_ignoring_case("ch"sv)) {
+    } else if (name.equals_ignoring_ascii_case("ch"sv)) {
         return Length::Type::Ch;
-    } else if (name.equals_ignoring_case("vw"sv)) {
+    } else if (name.equals_ignoring_ascii_case("vw"sv)) {
         return Length::Type::Vw;
-    } else if (name.equals_ignoring_case("vh"sv)) {
+    } else if (name.equals_ignoring_ascii_case("vh"sv)) {
         return Length::Type::Vh;
-    } else if (name.equals_ignoring_case("vmax"sv)) {
+    } else if (name.equals_ignoring_ascii_case("vmax"sv)) {
         return Length::Type::Vmax;
-    } else if (name.equals_ignoring_case("vmin"sv)) {
+    } else if (name.equals_ignoring_ascii_case("vmin"sv)) {
         return Length::Type::Vmin;
-    } else if (name.equals_ignoring_case("cm"sv)) {
+    } else if (name.equals_ignoring_ascii_case("cm"sv)) {
         return Length::Type::Cm;
-    } else if (name.equals_ignoring_case("in"sv)) {
+    } else if (name.equals_ignoring_ascii_case("in"sv)) {
         return Length::Type::In;
-    } else if (name.equals_ignoring_case("Q"sv)) {
+    } else if (name.equals_ignoring_ascii_case("Q"sv)) {
         return Length::Type::Q;
     }
 

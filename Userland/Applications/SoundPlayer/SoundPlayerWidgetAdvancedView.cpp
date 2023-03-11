@@ -7,7 +7,6 @@
 
 #include "SoundPlayerWidgetAdvancedView.h"
 #include "BarsVisualizationWidget.h"
-#include "Common.h"
 #include "M3UParser.h"
 #include "PlaybackManager.h"
 #include <AK/LexicalPath.h>
@@ -47,15 +46,21 @@ SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window
     m_stop_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/stop.png"sv).release_value_but_fixme_should_propagate_errors();
     m_back_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/go-back.png"sv).release_value_but_fixme_should_propagate_errors();
     m_next_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/go-forward.png"sv).release_value_but_fixme_should_propagate_errors();
+    m_volume_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/audio-volume-medium.png"sv).release_value_but_fixme_should_propagate_errors();
+    m_muted_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/audio-volume-muted.png"sv).release_value_but_fixme_should_propagate_errors();
 
     m_visualization = m_player_view->add<BarsVisualizationWidget>();
 
-    m_playback_progress_slider = m_player_view->add<AutoSlider>(Orientation::Horizontal);
+    m_playback_progress_slider = m_player_view->add<GUI::HorizontalSlider>();
     m_playback_progress_slider->set_fixed_height(20);
     m_playback_progress_slider->set_jump_to_cursor(true);
     m_playback_progress_slider->set_min(0);
-    m_playback_progress_slider->on_knob_released = [&](int value) {
-        seek(value);
+    m_playback_progress_slider->on_change = [&](int value) {
+        if (!m_playback_progress_slider->knob_dragging())
+            seek(value);
+    };
+    m_playback_progress_slider->on_drag_end = [&]() {
+        seek(m_playback_progress_slider->value());
     };
 
     auto& toolbar_container = m_player_view->add<GUI::ToolbarContainer>();
@@ -94,6 +99,12 @@ SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window
     menubar.add_action(*m_next_action);
 
     menubar.add_separator();
+
+    m_mute_action = GUI::Action::create("Mute", { Key_M }, m_volume_icon, [&](auto&) {
+        toggle_mute();
+    });
+    m_mute_action->set_enabled(true);
+    menubar.add_action(*m_mute_action);
 
     m_volume_label = &menubar.add<GUI::Label>();
     m_volume_label->set_fixed_width(30);
@@ -142,9 +153,6 @@ void SoundPlayerWidgetAdvancedView::drop_event(GUI::DropEvent& event)
 
 void SoundPlayerWidgetAdvancedView::keydown_event(GUI::KeyEvent& event)
 {
-    if (event.key() == Key_M)
-        toggle_mute();
-
     if (event.key() == Key_Up)
         m_volume_slider->increase_slider_by_page_steps(1);
 
@@ -181,9 +189,11 @@ void SoundPlayerWidgetAdvancedView::loop_mode_changed(Player::LoopMode)
 {
 }
 
-void SoundPlayerWidgetAdvancedView::mute_changed(bool)
+void SoundPlayerWidgetAdvancedView::mute_changed(bool muted)
 {
-    // FIXME: Update the volume slider when player is muted
+    m_mute_action->set_text(muted ? "Unmute"sv : "Mute"sv);
+    m_mute_action->set_icon(muted ? m_muted_icon : m_volume_icon);
+    m_volume_slider->set_enabled(!muted);
 }
 
 void SoundPlayerWidgetAdvancedView::sync_previous_next_actions()
@@ -219,8 +229,8 @@ void SoundPlayerWidgetAdvancedView::sound_buffer_played(FixedArray<Audio::Sample
     m_visualization->set_buffer(buffer);
     m_visualization->set_samplerate(sample_rate);
     // If the user is currently dragging the slider, don't interfere.
-    if (!m_playback_progress_slider->mouse_is_down())
-        m_playback_progress_slider->set_value(samples_played);
+    if (!m_playback_progress_slider->knob_dragging())
+        m_playback_progress_slider->set_value(samples_played, GUI::AllowCallback::No);
 }
 
 void SoundPlayerWidgetAdvancedView::volume_changed(double volume)

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@serenityos.org>
+ * Copyright (c) 2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -63,13 +64,16 @@ public:
     {
     }
 
-    Glyph(RefPtr<Bitmap> bitmap, float left_bearing, float advance, float ascent)
+    Glyph(RefPtr<Bitmap> bitmap, float left_bearing, float advance, float ascent, bool is_color_bitmap)
         : m_bitmap(bitmap)
         , m_left_bearing(left_bearing)
         , m_advance(advance)
         , m_ascent(ascent)
+        , m_color_bitmap(is_color_bitmap)
     {
     }
+
+    bool is_color_bitmap() const { return m_color_bitmap; }
 
     bool is_glyph_bitmap() const { return !m_bitmap; }
     GlyphBitmap glyph_bitmap() const { return m_glyph_bitmap; }
@@ -84,6 +88,7 @@ private:
     float m_left_bearing;
     float m_advance;
     float m_ascent;
+    bool m_color_bitmap { false };
 };
 
 struct GlyphSubpixelOffset {
@@ -127,6 +132,19 @@ struct FontPixelMetrics {
     float line_spacing() const { return ascent + descent + line_gap; }
 };
 
+// https://learn.microsoft.com/en-us/typography/opentype/spec/os2#uswidthclass
+enum FontWidth {
+    UltraCondensed = 1,
+    ExtraCondensed = 2,
+    Condensed = 3,
+    SemiCondensed = 4,
+    Normal = 5,
+    SemiExpanded = 6,
+    Expanded = 7,
+    ExtraExpanded = 8,
+    UltraExpanded = 9
+};
+
 class Font : public RefCounted<Font> {
 public:
     enum class AllowInexactSizeMatch {
@@ -141,8 +159,15 @@ public:
     virtual FontPixelMetrics pixel_metrics() const = 0;
 
     virtual u8 presentation_size() const = 0;
-    virtual float pixel_size() const = 0;
     virtual u8 slope() const = 0;
+
+    // Font pixel size (distance between ascender and descender).
+    virtual float pixel_size() const = 0;
+
+    // Font pixel size, rounded up to the nearest integer.
+    virtual int pixel_size_rounded_up() const = 0;
+
+    virtual u16 width() const = 0;
 
     virtual u16 weight() const = 0;
     virtual Glyph glyph(u32 code_point) const = 0;
@@ -151,9 +176,9 @@ public:
 
     virtual float glyph_left_bearing(u32 code_point) const = 0;
     virtual float glyph_width(u32 code_point) const = 0;
-    virtual float glyph_or_emoji_width(u32 code_point) const = 0;
+    virtual float glyph_or_emoji_width(Utf8CodePointIterator&) const = 0;
+    virtual float glyph_or_emoji_width(Utf32CodePointIterator&) const = 0;
     virtual float glyphs_horizontal_kerning(u32 left_code_point, u32 right_code_point) const = 0;
-    virtual u8 glyph_height() const = 0;
     virtual int x_height() const = 0;
     virtual float preferred_line_height() const = 0;
 
@@ -182,10 +207,14 @@ public:
     virtual DeprecatedString qualified_name() const = 0;
     virtual DeprecatedString human_readable_name() const = 0;
 
+    virtual RefPtr<Font> with_size(float point_size) const = 0;
+
     Font const& bold_variant() const;
 
+    virtual bool has_color_bitmaps() const = 0;
+
 private:
-    mutable RefPtr<Gfx::Font> m_bold_variant;
+    mutable RefPtr<Gfx::Font const> m_bold_variant;
 };
 
 }

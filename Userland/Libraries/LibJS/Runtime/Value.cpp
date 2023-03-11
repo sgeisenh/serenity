@@ -206,11 +206,11 @@ static ErrorOr<void> number_to_string_impl(StringBuilder& builder, double d, Num
     return {};
 }
 
-ThrowCompletionOr<String> number_to_string(VM& vm, double d, NumberToStringMode mode)
+ErrorOr<String> number_to_string(double d, NumberToStringMode mode)
 {
     StringBuilder builder;
-    TRY_OR_THROW_OOM(vm, number_to_string_impl(builder, d, mode));
-    return TRY_OR_THROW_OOM(vm, builder.to_string());
+    TRY(number_to_string_impl(builder, d, mode));
+    return builder.to_string();
 }
 
 DeprecatedString number_to_deprecated_string(double d, NumberToStringMode mode)
@@ -355,30 +355,43 @@ StringView Value::typeof() const
     }
 }
 
-DeprecatedString Value::to_string_without_side_effects() const
+ErrorOr<String> Value::to_string_without_side_effects() const
 {
     if (is_double())
-        return number_to_deprecated_string(m_value.as_double);
+        return number_to_string(m_value.as_double);
 
     switch (m_value.tag) {
     case UNDEFINED_TAG:
-        return "undefined";
+        return "undefined"_string;
     case NULL_TAG:
-        return "null";
+        return "null"_string;
     case BOOLEAN_TAG:
-        return as_bool() ? "true" : "false";
+        return as_bool() ? "true"_string : "false"_string;
     case INT32_TAG:
-        return DeprecatedString::number(as_i32());
+        return String::number(as_i32());
     case STRING_TAG:
-        return MUST(as_string().deprecated_string());
+        if (auto string = as_string().utf8_string(); string.is_throw_completion()) {
+            auto completion = string.release_error();
+
+            // We can't explicitly check for OOM because InternalError does not store the ErrorType
+            VERIFY(completion.value().has_value());
+            VERIFY(completion.value()->is_object());
+            VERIFY(is<InternalError>(completion.value()->as_object()));
+
+            return AK::Error::from_errno(ENOMEM);
+        } else {
+            return string.release_value();
+        }
     case SYMBOL_TAG:
-        return as_symbol().to_deprecated_string();
+        return as_symbol().descriptive_string();
     case BIGINT_TAG:
-        return as_bigint().to_deprecated_string();
+        return as_bigint().to_string();
     case OBJECT_TAG:
-        return DeprecatedString::formatted("[object {}]", as_object().class_name());
+        return String::formatted("[object {}]", as_object().class_name());
     case ACCESSOR_TAG:
-        return "<accessor>";
+        return "<accessor>"_string;
+    case EMPTY_TAG:
+        return "<empty>"_string;
     default:
         VERIFY_NOT_REACHED();
     }
@@ -396,7 +409,7 @@ ThrowCompletionOr<PrimitiveString*> Value::to_primitive_string(VM& vm)
 ThrowCompletionOr<String> Value::to_string(VM& vm) const
 {
     if (is_double())
-        return number_to_string(vm, m_value.as_double);
+        return TRY_OR_THROW_OOM(vm, number_to_string(m_value.as_double));
 
     switch (m_value.tag) {
     // 1. If argument is a String, return argument.
@@ -407,14 +420,14 @@ ThrowCompletionOr<String> Value::to_string(VM& vm) const
         return vm.throw_completion<TypeError>(ErrorType::Convert, "symbol", "string");
     // 3. If argument is undefined, return "undefined".
     case UNDEFINED_TAG:
-        return TRY_OR_THROW_OOM(vm, String::from_utf8("undefined"sv));
+        return TRY_OR_THROW_OOM(vm, "undefined"_string);
     // 4. If argument is null, return "null".
     case NULL_TAG:
-        return TRY_OR_THROW_OOM(vm, String::from_utf8("null"sv));
+        return TRY_OR_THROW_OOM(vm, "null"_string);
     // 5. If argument is true, return "true".
     // 6. If argument is false, return "false".
     case BOOLEAN_TAG:
-        return TRY_OR_THROW_OOM(vm, String::from_utf8(as_bool() ? "true"sv : "false"sv));
+        return TRY_OR_THROW_OOM(vm, as_bool() ? "true"_string : "false"_string);
     // 7. If argument is a Number, return Number::toString(argument, 10).
     case INT32_TAG:
         return TRY_OR_THROW_OOM(vm, String::number(as_i32()));
@@ -525,7 +538,7 @@ ThrowCompletionOr<Value> Value::to_primitive(VM& vm, PreferredType preferred_typ
                 return result;
 
             // vi. Throw a TypeError exception.
-            return vm.throw_completion<TypeError>(ErrorType::ToPrimitiveReturnedObject, to_string_without_side_effects(), hint);
+            return vm.throw_completion<TypeError>(ErrorType::ToPrimitiveReturnedObject, TRY_OR_THROW_OOM(vm, to_string_without_side_effects()), hint);
         }
 
         // c. If preferredType is not present, let preferredType be number.
@@ -651,36 +664,36 @@ static Optional<NumberParseResult> parse_number_text(StringView text)
 }
 
 // 7.1.4.1.1 StringToNumber ( str ), https://tc39.es/ecma262/#sec-stringtonumber
-Optional<Value> string_to_number(StringView string)
+double string_to_number(StringView string)
 {
     // 1. Let text be StringToCodePoints(str).
     DeprecatedString text = Utf8View(string).trim(whitespace_characters, AK::TrimMode::Both).as_string();
 
     // 2. Let literal be ParseText(text, StringNumericLiteral).
     if (text.is_empty())
-        return Value(0);
+        return 0;
     if (text == "Infinity" || text == "+Infinity")
-        return js_infinity();
+        return INFINITY;
     if (text == "-Infinity")
-        return js_negative_infinity();
+        return -INFINITY;
 
     auto result = parse_number_text(text);
 
     // 3. If literal is a List of errors, return NaN.
     if (!result.has_value())
-        return js_nan();
+        return NAN;
 
     // 4. Return StringNumericValue of literal.
     if (result->base != 10) {
         auto bigint = Crypto::UnsignedBigInteger::from_base(result->base, result->literal);
-        return Value(bigint.to_double());
+        return bigint.to_double();
     }
 
     auto maybe_double = text.to_double(AK::TrimWhitespace::No);
     if (!maybe_double.has_value())
-        return js_nan();
+        return NAN;
 
-    return Value(*maybe_double);
+    return *maybe_double;
 }
 
 // 7.1.4 ToNumber ( argument ), https://tc39.es/ecma262/#sec-tonumber
@@ -1225,7 +1238,7 @@ ThrowCompletionOr<FunctionObject*> Value::get_method(VM& vm, PropertyKey const& 
 
     // 4. If IsCallable(func) is false, throw a TypeError exception.
     if (!function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, function.to_string_without_side_effects()));
 
     // 5. Return func.
     return &function.as_function();
@@ -2042,7 +2055,7 @@ ThrowCompletionOr<Value> instance_of(VM& vm, Value value, Value target)
 {
     // 1. If target is not an Object, throw a TypeError exception.
     if (!target.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, target.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, target.to_string_without_side_effects()));
 
     // 2. Let instOfHandler be ? GetMethod(target, @@hasInstance).
     auto* instance_of_handler = TRY(target.get_method(vm, *vm.well_known_symbol_has_instance()));
@@ -2055,7 +2068,7 @@ ThrowCompletionOr<Value> instance_of(VM& vm, Value value, Value target)
 
     // 4. If IsCallable(target) is false, throw a TypeError exception.
     if (!target.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, target.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, target.to_string_without_side_effects()));
 
     // 5. Return ? OrdinaryHasInstance(target, V).
     return ordinary_has_instance(vm, target, value);
@@ -2090,7 +2103,7 @@ ThrowCompletionOr<Value> ordinary_has_instance(VM& vm, Value lhs, Value rhs)
 
     // 5. If P is not an Object, throw a TypeError exception.
     if (!rhs_prototype.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::InstanceOfOperatorBadPrototype, rhs.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::InstanceOfOperatorBadPrototype, TRY_OR_THROW_OOM(vm, rhs.to_string_without_side_effects()));
 
     // 6. Repeat,
     while (true) {

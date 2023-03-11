@@ -14,6 +14,7 @@
 #include <AK/RefPtr.h>
 #include <AK/Userspace.h>
 #include <AK/Variant.h>
+#include <Kernel/API/POSIX/select.h>
 #include <Kernel/API/POSIX/sys/resource.h>
 #include <Kernel/API/Syscall.h>
 #include <Kernel/Assertions.h>
@@ -27,12 +28,10 @@
 #include <Kernel/Jail.h>
 #include <Kernel/Library/LockWeakPtr.h>
 #include <Kernel/Library/LockWeakable.h>
-#include <Kernel/Library/NonnullLockRefPtrVector.h>
 #include <Kernel/Locking/Mutex.h>
 #include <Kernel/Locking/MutexProtected.h>
 #include <Kernel/Memory/AddressSpace.h>
 #include <Kernel/PerformanceEventBuffer.h>
-#include <Kernel/ProcessExposed.h>
 #include <Kernel/ProcessGroup.h>
 #include <Kernel/StdLib.h>
 #include <Kernel/Thread.h>
@@ -159,8 +158,6 @@ public:
     };
 
 public:
-    class ProcessProcFSTraits;
-
     static Process& current()
     {
         auto* current_thread = Processor::current_thread();
@@ -194,7 +191,7 @@ public:
     }
 
     static LockRefPtr<Process> create_kernel_process(LockRefPtr<Thread>& first_thread, NonnullOwnPtr<KString> name, void (*entry)(void*), void* entry_data = nullptr, u32 affinity = THREAD_AFFINITY_DEFAULT, RegisterProcess do_register = RegisterProcess::Yes);
-    static ErrorOr<NonnullLockRefPtr<Process>> try_create_user_process(LockRefPtr<Thread>& first_thread, StringView path, UserID, GroupID, NonnullOwnPtrVector<KString> arguments, NonnullOwnPtrVector<KString> environment, TTY*);
+    static ErrorOr<NonnullLockRefPtr<Process>> try_create_user_process(LockRefPtr<Thread>& first_thread, StringView path, UserID, GroupID, Vector<NonnullOwnPtr<KString>> arguments, Vector<NonnullOwnPtr<KString>> environment, TTY*);
     static void register_new(Process&);
 
     ~Process();
@@ -220,7 +217,9 @@ public:
     static LockRefPtr<Process> from_pid_ignoring_jails(ProcessID);
     static SessionID get_sid_from_pgid(ProcessGroupID pgid);
 
-    StringView name() const { return m_name->view(); }
+    SpinlockProtected<NonnullOwnPtr<KString>, LockRank::None> const& name() const;
+    void set_name(NonnullOwnPtr<KString>);
+
     ProcessID pid() const
     {
         return with_protected_data([](auto& protected_data) { return protected_data.pid; });
@@ -250,7 +249,6 @@ public:
     {
         return with_protected_data([](auto& protected_data) { return protected_data.dumpable; });
     }
-    void set_dumpable(bool);
 
     mode_t umask() const
     {
@@ -292,7 +290,7 @@ public:
     ErrorOr<FlatPtr> sys$emuctl();
     ErrorOr<FlatPtr> sys$yield();
     ErrorOr<FlatPtr> sys$sync();
-    ErrorOr<FlatPtr> sys$beep();
+    ErrorOr<FlatPtr> sys$beep(int tone);
     ErrorOr<FlatPtr> sys$get_process_name(Userspace<char*> buffer, size_t buffer_size);
     ErrorOr<FlatPtr> sys$set_process_name(Userspace<char const*> user_name, size_t user_name_length);
     ErrorOr<FlatPtr> sys$create_inode_watcher(u32 flags);
@@ -440,7 +438,6 @@ public:
     ErrorOr<FlatPtr> sys$disown(ProcessID);
     ErrorOr<FlatPtr> sys$allocate_tls(Userspace<char const*> initial_data, size_t);
     ErrorOr<FlatPtr> sys$prctl(int option, FlatPtr arg1, FlatPtr arg2);
-    ErrorOr<FlatPtr> sys$set_coredump_metadata(Userspace<Syscall::SC_set_coredump_metadata_params const*>);
     ErrorOr<FlatPtr> sys$anon_create(size_t, int options);
     ErrorOr<FlatPtr> sys$statvfs(Userspace<Syscall::SC_statvfs_params const*> user_params);
     ErrorOr<FlatPtr> sys$fstatvfs(int fd, statvfs* buf);
@@ -454,7 +451,7 @@ public:
 
     static void initialize();
 
-    [[noreturn]] void crash(int signal, FlatPtr ip, bool out_of_memory = false);
+    [[noreturn]] void crash(int signal, Optional<RegisterState const&> regs, bool out_of_memory = false);
     [[nodiscard]] siginfo_t wait_info() const;
 
     const TTY* tty() const { return m_tty; }
@@ -473,12 +470,12 @@ public:
     static constexpr size_t max_arguments_size = Thread::default_userspace_stack_size / 8;
     static constexpr size_t max_environment_size = Thread::default_userspace_stack_size / 8;
     static constexpr size_t max_auxiliary_size = Thread::default_userspace_stack_size / 8;
-    NonnullOwnPtrVector<KString> const& arguments() const { return m_arguments; };
-    NonnullOwnPtrVector<KString> const& environment() const { return m_environment; };
+    Vector<NonnullOwnPtr<KString>> const& arguments() const { return m_arguments; };
+    Vector<NonnullOwnPtr<KString>> const& environment() const { return m_environment; };
 
-    ErrorOr<void> exec(NonnullOwnPtr<KString> path, NonnullOwnPtrVector<KString> arguments, NonnullOwnPtrVector<KString> environment, Thread*& new_main_thread, InterruptsState& previous_interrupts_state, int recursion_depth = 0);
+    ErrorOr<void> exec(NonnullOwnPtr<KString> path, Vector<NonnullOwnPtr<KString>> arguments, Vector<NonnullOwnPtr<KString>> environment, Thread*& new_main_thread, InterruptsState& previous_interrupts_state, int recursion_depth = 0);
 
-    ErrorOr<LoadResult> load(NonnullLockRefPtr<OpenFileDescription> main_program_description, LockRefPtr<OpenFileDescription> interpreter_description, const ElfW(Ehdr) & main_program_header);
+    ErrorOr<LoadResult> load(NonnullRefPtr<OpenFileDescription> main_program_description, RefPtr<OpenFileDescription> interpreter_description, const ElfW(Ehdr) & main_program_header);
 
     void terminate_due_to_signal(u8 signal);
     ErrorOr<void> send_signal(u8 signal, Process* sender);
@@ -568,7 +565,7 @@ public:
     ErrorOr<void> set_coredump_property(NonnullOwnPtr<KString> key, NonnullOwnPtr<KString> value);
     ErrorOr<void> try_set_coredump_property(StringView key, StringView value);
 
-    NonnullLockRefPtrVector<Thread> const& threads_for_coredump(Badge<Coredump>) const { return m_threads_for_coredump; }
+    Vector<NonnullLockRefPtr<Thread>> const& threads_for_coredump(Badge<Coredump>) const { return m_threads_for_coredump; }
 
     PerformanceEventBuffer* perf_events() { return m_perf_event_buffer; }
     PerformanceEventBuffer const* perf_events() const { return m_perf_event_buffer; }
@@ -608,12 +605,12 @@ private:
     bool create_perf_events_buffer_if_needed();
     void delete_perf_events_buffer();
 
-    ErrorOr<void> do_exec(NonnullLockRefPtr<OpenFileDescription> main_program_description, NonnullOwnPtrVector<KString> arguments, NonnullOwnPtrVector<KString> environment, LockRefPtr<OpenFileDescription> interpreter_description, Thread*& new_main_thread, InterruptsState& previous_interrupts_state, const ElfW(Ehdr) & main_program_header);
+    ErrorOr<void> do_exec(NonnullRefPtr<OpenFileDescription> main_program_description, Vector<NonnullOwnPtr<KString>> arguments, Vector<NonnullOwnPtr<KString>> environment, RefPtr<OpenFileDescription> interpreter_description, Thread*& new_main_thread, InterruptsState& previous_interrupts_state, const ElfW(Ehdr) & main_program_header);
     ErrorOr<FlatPtr> do_write(OpenFileDescription&, UserOrKernelBuffer const&, size_t, Optional<off_t> = {});
 
     ErrorOr<FlatPtr> do_statvfs(FileSystem const& path, Custody const*, statvfs* buf);
 
-    ErrorOr<LockRefPtr<OpenFileDescription>> find_elf_interpreter_for_executable(StringView path, ElfW(Ehdr) const& main_executable_header, size_t main_executable_header_size, size_t file_size);
+    ErrorOr<RefPtr<OpenFileDescription>> find_elf_interpreter_for_executable(StringView path, ElfW(Ehdr) const& main_executable_header, size_t main_executable_header_size, size_t file_size);
 
     ErrorOr<void> do_kill(Process&, int signal);
     ErrorOr<void> do_killpg(ProcessGroupID pgrp, int signal);
@@ -637,7 +634,8 @@ private:
     ErrorOr<FlatPtr> read_impl(int fd, Userspace<u8*> buffer, size_t size);
 
 public:
-    NonnullLockRefPtr<ProcessProcFSTraits> procfs_traits() const { return *m_procfs_traits; }
+    ErrorOr<void> traverse_as_directory(FileSystemID, Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)> callback) const;
+    ErrorOr<NonnullRefPtr<Inode>> lookup_as_directory(ProcFS&, StringView name) const;
     ErrorOr<void> procfs_get_fds_stats(KBufferBuilder& builder) const;
     ErrorOr<void> procfs_get_perf_events(KBufferBuilder& builder) const;
     ErrorOr<void> procfs_get_unveil_stats(KBufferBuilder& builder) const;
@@ -649,13 +647,13 @@ public:
     mode_t binary_link_required_mode() const;
     ErrorOr<void> procfs_get_thread_stack(ThreadID thread_id, KBufferBuilder& builder) const;
     ErrorOr<void> traverse_stacks_directory(FileSystemID, Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)> callback) const;
-    ErrorOr<NonnullLockRefPtr<Inode>> lookup_stacks_directory(ProcFS const&, StringView name) const;
+    ErrorOr<NonnullRefPtr<Inode>> lookup_stacks_directory(ProcFS&, StringView name) const;
     ErrorOr<size_t> procfs_get_file_description_link(unsigned fd, KBufferBuilder& builder) const;
     ErrorOr<void> traverse_file_descriptions_directory(FileSystemID, Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)> callback) const;
-    ErrorOr<NonnullLockRefPtr<Inode>> lookup_file_descriptions_directory(ProcFS const&, StringView name) const;
-    ErrorOr<NonnullLockRefPtr<Inode>> lookup_children_directory(ProcFS const&, StringView name) const;
+    ErrorOr<NonnullRefPtr<Inode>> lookup_file_descriptions_directory(ProcFS&, StringView name) const;
+    ErrorOr<NonnullRefPtr<Inode>> lookup_children_directory(ProcFS&, StringView name) const;
     ErrorOr<void> traverse_children_directory(FileSystemID, Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)> callback) const;
-    ErrorOr<size_t> procfs_get_child_proccess_link(ProcessID child_pid, KBufferBuilder& builder) const;
+    ErrorOr<size_t> procfs_get_child_process_link(ProcessID child_pid, KBufferBuilder& builder) const;
 
 private:
     inline PerformanceEventBuffer* current_perf_events_buffer()
@@ -669,7 +667,7 @@ private:
 
     IntrusiveListNode<Process> m_list_node;
 
-    NonnullOwnPtr<KString> m_name;
+    SpinlockProtected<NonnullOwnPtr<KString>, LockRank::None> m_name;
 
     SpinlockProtected<OwnPtr<Memory::AddressSpace>, LockRank::None> m_space;
 
@@ -706,10 +704,10 @@ public:
         void set_flags(u32 flags) { m_flags = flags; }
 
         void clear();
-        void set(NonnullLockRefPtr<OpenFileDescription>&&, u32 flags = 0);
+        void set(NonnullRefPtr<OpenFileDescription>, u32 flags = 0);
 
     private:
-        LockRefPtr<OpenFileDescription> m_description;
+        RefPtr<OpenFileDescription> m_description;
         bool m_is_allocated { false };
         u32 m_flags { 0 };
     };
@@ -760,7 +758,7 @@ public:
             m_fds_metadatas.clear();
         }
 
-        ErrorOr<NonnullLockRefPtr<OpenFileDescription>> open_file_description(int fd) const;
+        ErrorOr<NonnullRefPtr<OpenFileDescription>> open_file_description(int fd) const;
 
     private:
         static constexpr size_t s_max_open_file_descriptors { FD_SETSIZE };
@@ -807,41 +805,15 @@ public:
         OpenFileDescriptionAndFlags* m_description { nullptr };
     };
 
-    class ProcessProcFSTraits : public ProcFSExposedComponent {
-    public:
-        static ErrorOr<NonnullLockRefPtr<ProcessProcFSTraits>> try_create(Badge<Process>, LockWeakPtr<Process> process)
-        {
-            return adopt_nonnull_lock_ref_or_enomem(new (nothrow) ProcessProcFSTraits(move(process)));
-        }
-
-        virtual InodeIndex component_index() const override;
-        virtual ErrorOr<NonnullLockRefPtr<ProcFSInode>> to_inode(ProcFS const& procfs_instance) const override;
-        virtual ErrorOr<void> traverse_as_directory(FileSystemID, Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)>) const override;
-        virtual mode_t required_mode() const override { return 0555; }
-
-        virtual UserID owner_user() const override;
-        virtual GroupID owner_group() const override;
-
-    private:
-        explicit ProcessProcFSTraits(LockWeakPtr<Process> process)
-            : m_process(move(process))
-        {
-        }
-
-        // NOTE: We need to weakly hold on to the process, because otherwise
-        //       we would be creating a reference cycle.
-        LockWeakPtr<Process> m_process;
-    };
-
     MutexProtected<OpenFileDescriptions>& fds() { return m_fds; }
     MutexProtected<OpenFileDescriptions> const& fds() const { return m_fds; }
 
-    ErrorOr<NonnullLockRefPtr<OpenFileDescription>> open_file_description(int fd)
+    ErrorOr<NonnullRefPtr<OpenFileDescription>> open_file_description(int fd)
     {
         return m_fds.with_shared([fd](auto& fds) { return fds.open_file_description(fd); });
     }
 
-    ErrorOr<NonnullLockRefPtr<OpenFileDescription>> open_file_description(int fd) const
+    ErrorOr<NonnullRefPtr<OpenFileDescription>> open_file_description(int fd) const
     {
         return m_fds.with_shared([fd](auto& fds) { return fds.open_file_description(fd); });
     }
@@ -873,8 +845,8 @@ private:
 
     SpinlockProtected<RefPtr<Custody>, LockRank::None> m_current_directory;
 
-    NonnullOwnPtrVector<KString> m_arguments;
-    NonnullOwnPtrVector<KString> m_environment;
+    Vector<NonnullOwnPtr<KString>> m_arguments;
+    Vector<NonnullOwnPtr<KString>> m_environment;
 
     LockRefPtr<TTY> m_tty;
 
@@ -909,9 +881,8 @@ private:
     };
 
     SpinlockProtected<Array<CoredumpProperty, 4>, LockRank::None> m_coredump_properties {};
-    NonnullLockRefPtrVector<Thread> m_threads_for_coredump;
+    Vector<NonnullLockRefPtr<Thread>> m_threads_for_coredump;
 
-    mutable LockRefPtr<ProcessProcFSTraits> m_procfs_traits;
     struct SignalActionData {
         VirtualAddress handler_or_sigaction;
         int flags { 0 };
@@ -1027,7 +998,9 @@ template<>
 struct AK::Formatter<Kernel::Process> : AK::Formatter<FormatString> {
     ErrorOr<void> format(FormatBuilder& builder, Kernel::Process const& value)
     {
-        return AK::Formatter<FormatString>::format(builder, "{}({})"sv, value.name(), value.pid().value());
+        return value.name().with([&](auto& process_name) {
+            return AK::Formatter<FormatString>::format(builder, "{}({})"sv, process_name->view(), value.pid().value());
+        });
     }
 };
 

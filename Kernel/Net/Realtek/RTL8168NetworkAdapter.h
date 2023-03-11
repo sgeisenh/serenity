@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <Kernel/Bus/PCI/Access.h>
 #include <Kernel/Bus/PCI/Device.h>
@@ -205,10 +204,10 @@ private:
     NonnullOwnPtr<IOWindow> m_registers_io_window;
     u32 m_ocp_base_address { 0 };
     OwnPtr<Memory::Region> m_rx_descriptors_region;
-    NonnullOwnPtrVector<Memory::Region> m_rx_buffers_regions;
+    Vector<NonnullOwnPtr<Memory::Region>> m_rx_buffers_regions;
     u16 m_rx_free_index { 0 };
     OwnPtr<Memory::Region> m_tx_descriptors_region;
-    NonnullOwnPtrVector<Memory::Region> m_tx_buffers_regions;
+    Vector<NonnullOwnPtr<Memory::Region>> m_tx_buffers_regions;
     u16 m_tx_free_index { 0 };
     bool m_link_up { false };
     EntropySource m_entropy_source;

@@ -81,9 +81,9 @@ static DeprecatedString mime_type_from_content_type(DeprecatedString const& cont
     return content_type;
 }
 
-static bool is_valid_encoding(DeprecatedString const& encoding)
+static bool is_valid_encoding(StringView encoding)
 {
-    return TextCodec::decoder_for(encoding);
+    return TextCodec::decoder_for(encoding).has_value();
 }
 
 void Resource::did_load(Badge<ResourceLoader>, ReadonlyBytes data, HashMap<DeprecatedString, DeprecatedString, CaseInsensitiveStringTraits> const& headers, Optional<u32> status_code)
@@ -110,7 +110,7 @@ void Resource::did_load(Badge<ResourceLoader>, ReadonlyBytes data, HashMap<Depre
         m_mime_type = url().data_mime_type();
     } else {
         auto content_type_options = headers.get("X-Content-Type-Options");
-        if (content_type_options.value_or("").equals_ignoring_case("nosniff"sv)) {
+        if (content_type_options.value_or("").equals_ignoring_ascii_case("nosniff"sv)) {
             m_mime_type = "text/plain";
         } else {
             m_mime_type = Core::guess_mime_type_based_on_filename(url().path());

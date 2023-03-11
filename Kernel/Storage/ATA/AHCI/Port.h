@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <AK/RefPtr.h>
 #include <Kernel/Devices/Device.h>
@@ -61,8 +60,6 @@ private:
 
     ALWAYS_INLINE void clear_sata_error_register() const;
 
-    void eject();
-
     char const* try_disambiguate_sata_status();
     void try_disambiguate_sata_error();
 
@@ -112,8 +109,8 @@ private:
 
     mutable bool m_wait_for_completion { false };
 
-    NonnullRefPtrVector<Memory::PhysicalPage> m_dma_buffers;
-    NonnullRefPtrVector<Memory::PhysicalPage> m_command_table_pages;
+    Vector<NonnullRefPtr<Memory::PhysicalPage>> m_dma_buffers;
+    Vector<NonnullRefPtr<Memory::PhysicalPage>> m_command_table_pages;
     RefPtr<Memory::PhysicalPage> m_command_list_page;
     OwnPtr<Memory::Region> m_command_list_region;
     RefPtr<Memory::PhysicalPage> m_fis_receive_page;

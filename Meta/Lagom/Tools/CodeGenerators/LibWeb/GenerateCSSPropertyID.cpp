@@ -11,8 +11,8 @@
 #include <LibCore/ArgsParser.h>
 #include <LibMain/Main.h>
 
-ErrorOr<void> generate_header_file(JsonObject& properties, Core::Stream::File& file);
-ErrorOr<void> generate_implementation_file(JsonObject& properties, Core::Stream::File& file);
+ErrorOr<void> generate_header_file(JsonObject& properties, Core::File& file);
+ErrorOr<void> generate_implementation_file(JsonObject& properties, Core::File& file);
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
@@ -30,8 +30,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     VERIFY(json.is_object());
     auto properties = json.as_object();
 
-    auto generated_header_file = TRY(Core::Stream::File::open(generated_header_path, Core::Stream::OpenMode::Write));
-    auto generated_implementation_file = TRY(Core::Stream::File::open(generated_implementation_path, Core::Stream::OpenMode::Write));
+    auto generated_header_file = TRY(Core::File::open(generated_header_path, Core::File::OpenMode::Write));
+    auto generated_implementation_file = TRY(Core::File::open(generated_implementation_path, Core::File::OpenMode::Write));
 
     TRY(generate_header_file(properties, *generated_header_file));
     TRY(generate_implementation_file(properties, *generated_implementation_file));
@@ -39,7 +39,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     return 0;
 }
 
-ErrorOr<void> generate_header_file(JsonObject& properties, Core::Stream::File& file)
+ErrorOr<void> generate_header_file(JsonObject& properties, Core::File& file)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -49,6 +49,7 @@ ErrorOr<void> generate_header_file(JsonObject& properties, Core::Stream::File& f
 #include <AK/NonnullRefPtr.h>
 #include <AK/StringView.h>
 #include <AK/Traits.h>
+#include <LibJS/Forward.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::CSS {
@@ -106,7 +107,7 @@ PropertyID property_id_from_camel_case_string(StringView);
 PropertyID property_id_from_string(StringView);
 StringView string_from_property_id(PropertyID);
 bool is_inherited_property(PropertyID);
-NonnullRefPtr<StyleValue> property_initial_value(PropertyID);
+NonnullRefPtr<StyleValue> property_initial_value(JS::Realm&, PropertyID);
 
 bool property_accepts_value(PropertyID, StyleValue&);
 size_t property_maximum_value_count(PropertyID);
@@ -143,7 +144,7 @@ struct Traits<Web::CSS::PropertyID> : public GenericTraits<Web::CSS::PropertyID>
     return {};
 }
 
-ErrorOr<void> generate_implementation_file(JsonObject& properties, Core::Stream::File& file)
+ErrorOr<void> generate_implementation_file(JsonObject& properties, Core::File& file)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -154,6 +155,7 @@ ErrorOr<void> generate_implementation_file(JsonObject& properties, Core::Stream:
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/CSS/StyleValue.h>
+#include <LibWeb/Infra/Strings.h>
 
 namespace Web::CSS {
 
@@ -169,7 +171,7 @@ PropertyID property_id_from_camel_case_string(StringView string)
         member_generator.set("name:titlecase", title_casify(name));
         member_generator.set("name:camelcase", camel_casify(name));
         member_generator.append(R"~~~(
-    if (string.equals_ignoring_case("@name:camelcase@"sv))
+    if (string.equals_ignoring_ascii_case("@name:camelcase@"sv))
         return PropertyID::@name:titlecase@;
 )~~~");
     });
@@ -189,7 +191,7 @@ PropertyID property_id_from_string(StringView string)
         member_generator.set("name", name);
         member_generator.set("name:titlecase", title_casify(name));
         member_generator.append(R"~~~(
-    if (string.equals_ignoring_case("@name@"sv))
+    if (Infra::is_ascii_case_insensitive_match(string, "@name@"sv))
         return PropertyID::@name:titlecase@;
 )~~~");
     });
@@ -307,13 +309,13 @@ bool property_affects_stacking_context(PropertyID property_id)
     }
 }
 
-NonnullRefPtr<StyleValue> property_initial_value(PropertyID property_id)
+NonnullRefPtr<StyleValue> property_initial_value(JS::Realm& context_realm, PropertyID property_id)
 {
     static Array<RefPtr<StyleValue>, to_underlying(last_property_id) + 1> initial_values;
     static bool initialized = false;
     if (!initialized) {
         initialized = true;
-        Parser::ParsingContext parsing_context;
+        Parser::ParsingContext parsing_context(context_realm);
 )~~~");
 
     // NOTE: Parsing a shorthand property requires that its longhands are already available here.

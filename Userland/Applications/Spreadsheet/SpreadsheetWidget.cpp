@@ -27,11 +27,11 @@
 
 namespace Spreadsheet {
 
-SpreadsheetWidget::SpreadsheetWidget(GUI::Window& parent_window, NonnullRefPtrVector<Sheet>&& sheets, bool should_add_sheet_if_empty)
+SpreadsheetWidget::SpreadsheetWidget(GUI::Window& parent_window, Vector<NonnullRefPtr<Sheet>>&& sheets, bool should_add_sheet_if_empty)
     : m_workbook(make<Workbook>(move(sheets), parent_window))
 {
     set_fill_with_background_color(true);
-    set_layout<GUI::VerticalBoxLayout>().set_margins(2);
+    set_layout<GUI::VerticalBoxLayout>(2);
 
     auto& toolbar_container = add<GUI::ToolbarContainer>();
     auto& toolbar = toolbar_container.add<GUI::Toolbar>();
@@ -39,12 +39,12 @@ SpreadsheetWidget::SpreadsheetWidget(GUI::Window& parent_window, NonnullRefPtrVe
     auto& container = add<GUI::VerticalSplitter>();
 
     auto& top_bar = container.add<GUI::Frame>();
-    top_bar.set_layout<GUI::HorizontalBoxLayout>().set_spacing(1);
+    top_bar.set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 1);
     top_bar.set_preferred_height(26);
     auto& current_cell_label = top_bar.add<GUI::Label>("");
     current_cell_label.set_fixed_width(50);
 
-    auto& help_button = top_bar.add<GUI::Button>("");
+    auto& help_button = top_bar.add<GUI::Button>();
     help_button.set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-help.png"sv).release_value_but_fixme_should_propagate_errors());
     help_button.set_tooltip("Functions Help");
     help_button.set_fixed_size(20, 20);
@@ -83,7 +83,7 @@ SpreadsheetWidget::SpreadsheetWidget(GUI::Window& parent_window, NonnullRefPtrVe
     m_inline_documentation_window->set_resizable(false);
     auto inline_widget = m_inline_documentation_window->set_main_widget<GUI::Frame>().release_value_but_fixme_should_propagate_errors();
     inline_widget->set_fill_with_background_color(true);
-    inline_widget->set_layout<GUI::VerticalBoxLayout>().set_margins(4);
+    inline_widget->set_layout<GUI::VerticalBoxLayout>(4);
     inline_widget->set_frame_shape(Gfx::FrameShape::Box);
     m_inline_documentation_label = inline_widget->add<GUI::Label>();
     m_inline_documentation_label->set_fill_with_background_color(true);
@@ -111,7 +111,7 @@ SpreadsheetWidget::SpreadsheetWidget(GUI::Window& parent_window, NonnullRefPtrVe
     m_tab_context_menu->add_action(GUI::Action::create("Add new sheet...", Gfx::Bitmap::load_from_file("/res/icons/16x16/new-tab.png"sv).release_value_but_fixme_should_propagate_errors(), [this](auto&) {
         DeprecatedString name;
         if (GUI::InputBox::show(window(), name, "Name for new sheet"sv, "Create sheet"sv) == GUI::Dialog::ExecResult::OK) {
-            NonnullRefPtrVector<Sheet> new_sheets;
+            Vector<NonnullRefPtr<Sheet>> new_sheets;
             new_sheets.append(m_workbook->add_sheet(name));
             setup_tabs(move(new_sheets));
         }
@@ -147,7 +147,7 @@ SpreadsheetWidget::SpreadsheetWidget(GUI::Window& parent_window, NonnullRefPtrVe
             return;
         }
 
-        auto response = FileSystemAccessClient::Client::the().request_file(window(), current_filename(), Core::Stream::OpenMode::Write);
+        auto response = FileSystemAccessClient::Client::the().request_file(window(), current_filename(), Core::File::OpenMode::Write);
         if (response.is_error())
             return;
         save(response.value().filename(), response.value().stream());
@@ -330,10 +330,10 @@ void SpreadsheetWidget::clipboard_content_did_change(DeprecatedString const& mim
         m_paste_action->set_enabled(!sheet->selected_cells().is_empty() && mime_type.starts_with("text/"sv));
 }
 
-void SpreadsheetWidget::setup_tabs(NonnullRefPtrVector<Sheet> new_sheets)
+void SpreadsheetWidget::setup_tabs(Vector<NonnullRefPtr<Sheet>> new_sheets)
 {
     for (auto& sheet : new_sheets) {
-        auto& new_view = m_tab_widget->add_tab<SpreadsheetView>(sheet.name(), sheet);
+        auto& new_view = m_tab_widget->add_tab<SpreadsheetView>(sheet->name(), sheet);
         new_view.model()->on_cell_data_change = [&](auto& cell, auto& previous_data) {
             undo_stack().push(make<CellsUndoCommand>(cell, previous_data));
             window()->set_modified(true);
@@ -493,7 +493,7 @@ void SpreadsheetWidget::change_cell_static_color_format(Spreadsheet::FormatType 
     }
 }
 
-void SpreadsheetWidget::save(String const& filename, Core::Stream::File& file)
+void SpreadsheetWidget::save(String const& filename, Core::File& file)
 {
     auto result = m_workbook->write_to_file(filename, file);
     if (result.is_error()) {
@@ -504,7 +504,7 @@ void SpreadsheetWidget::save(String const& filename, Core::Stream::File& file)
     window()->set_modified(false);
 }
 
-void SpreadsheetWidget::load_file(String const& filename, Core::Stream::File& file)
+void SpreadsheetWidget::load_file(String const& filename, Core::File& file)
 {
     auto result = m_workbook->open_file(filename, file);
     if (result.is_error()) {
@@ -523,7 +523,7 @@ void SpreadsheetWidget::load_file(String const& filename, Core::Stream::File& fi
     update_window_title();
 }
 
-void SpreadsheetWidget::import_sheets(String const& filename, Core::Stream::File& file)
+void SpreadsheetWidget::import_sheets(String const& filename, Core::File& file)
 {
     auto result = m_workbook->import_file(filename, file);
     if (result.is_error()) {
@@ -570,7 +570,7 @@ void SpreadsheetWidget::add_sheet()
     name.append("Sheet"sv);
     name.appendff(" {}", m_workbook->sheets().size() + 1);
 
-    NonnullRefPtrVector<Sheet> new_sheets;
+    Vector<NonnullRefPtr<Sheet>> new_sheets;
     new_sheets.append(m_workbook->add_sheet(name.string_view()));
     setup_tabs(move(new_sheets));
 }
@@ -579,7 +579,7 @@ void SpreadsheetWidget::add_sheet(NonnullRefPtr<Sheet>&& sheet)
 {
     VERIFY(m_workbook == &sheet->workbook());
 
-    NonnullRefPtrVector<Sheet> new_sheets;
+    Vector<NonnullRefPtr<Sheet>> new_sheets;
     new_sheets.append(move(sheet));
     m_workbook->sheets().extend(new_sheets);
     setup_tabs(new_sheets);

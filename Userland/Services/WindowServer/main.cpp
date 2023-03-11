@@ -11,8 +11,8 @@
 #include "WindowManager.h"
 #include <Kernel/API/Graphics.h>
 #include <LibCore/ConfigFile.h>
+#include <LibCore/DeprecatedFile.h>
 #include <LibCore/DirIterator.h>
-#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/SystemTheme.h>
@@ -47,7 +47,11 @@ ErrorOr<int> serenity_main(Main::Arguments)
     WindowServer::g_config = TRY(Core::ConfigFile::open("/etc/WindowServer.ini", Core::ConfigFile::AllowWriting::Yes));
     auto theme_name = WindowServer::g_config->read_entry("Theme", "Name", "Default");
 
-    auto theme = TRY(Gfx::load_system_theme(DeprecatedString::formatted("/res/themes/{}.ini", theme_name)));
+    Optional<DeprecatedString> custom_color_scheme_path = OptionalNone();
+    if (WindowServer::g_config->read_bool_entry("Theme", "LoadCustomColorScheme", false))
+        custom_color_scheme_path = WindowServer::g_config->read_entry("Theme", "CustomColorSchemePath");
+
+    auto theme = TRY(Gfx::load_system_theme(DeprecatedString::formatted("/res/themes/{}.ini", theme_name), custom_color_scheme_path));
     Gfx::set_system_theme(theme);
     auto palette = Gfx::PaletteImpl::create_with_anonymous_buffer(theme);
 
@@ -85,7 +89,7 @@ ErrorOr<int> serenity_main(Main::Arguments)
                 if (!path.starts_with("connector"sv))
                     continue;
                 auto full_path = DeprecatedString::formatted("/dev/gpu/{}", path);
-                if (!Core::File::is_device(full_path))
+                if (!Core::DeprecatedFile::is_device(full_path))
                     continue;
                 auto display_connector_fd = TRY(Core::System::open(full_path, O_RDWR | O_CLOEXEC));
                 if (int rc = graphics_connector_set_responsible(display_connector_fd); rc != 0)

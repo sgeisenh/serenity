@@ -3,7 +3,7 @@
  * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2022, Tobias Christiansen <tobyase@serenityos.org>
  * Copyright (c) 2022, Linus Groh <linusg@serenityos.org>
- * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2022-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -33,7 +33,7 @@ struct Route {
 
 struct MatchedRoute {
     RouteHandler handler;
-    Vector<StringView> parameters;
+    Vector<String> parameters;
 };
 
 // clang-format off
@@ -87,6 +87,7 @@ static constexpr auto s_webdriver_endpoints = Array {
     ROUTE(GET, "/session/:session_id/element/:element_id/rect"sv, get_element_rect),
     ROUTE(GET, "/session/:session_id/element/:element_id/enabled"sv, is_element_enabled),
     ROUTE(GET, "/session/:session_id/element/:element_id/computedrole"sv, get_computed_role),
+    ROUTE(GET, "/session/:session_id/element/:element_id/computedlabel"sv, get_computed_label),
     ROUTE(POST, "/session/:session_id/element/:element_id/click"sv, element_click),
     ROUTE(GET, "/session/:session_id/source"sv, get_source),
     ROUTE(POST, "/session/:session_id/execute/sync"sv, execute_script),
@@ -111,7 +112,7 @@ static ErrorOr<MatchedRoute, Error> match_route(HTTP::HttpRequest const& request
     dbgln_if(WEBDRIVER_DEBUG, "match_route({}, {})", HTTP::to_deprecated_string(request.method()), request.resource());
 
     auto request_path = request.resource().view();
-    Vector<StringView> parameters;
+    Vector<String> parameters;
 
     auto next_segment = [](auto& path) -> Optional<StringView> {
         if (auto index = path.find('/'); index.has_value() && (*index + 1) < path.length()) {
@@ -149,14 +150,14 @@ static ErrorOr<MatchedRoute, Error> match_route(HTTP::HttpRequest const& request
             else if (request_segment.has_value() != route_segment.has_value())
                 on_failed_match();
             else if (route_segment->starts_with(':'))
-                parameters.append(*request_segment);
+                TRY(parameters.try_append(TRY(String::from_utf8(*request_segment))));
             else if (request_segment != route_segment)
                 on_failed_match();
         }
 
         if (*match) {
             dbgln_if(WEBDRIVER_DEBUG, "- Found match with parameters={}", parameters);
-            return MatchedRoute { route.handler, parameters };
+            return MatchedRoute { route.handler, move(parameters) };
         }
     }
 
@@ -170,7 +171,7 @@ static JsonValue make_success_response(JsonValue value)
     return result;
 }
 
-Client::Client(NonnullOwnPtr<Core::Stream::BufferedTCPSocket> socket, Core::Object* parent)
+Client::Client(NonnullOwnPtr<Core::BufferedTCPSocket> socket, Core::Object* parent)
     : Core::Object(parent)
     , m_socket(move(socket))
 {
@@ -219,7 +220,7 @@ ErrorOr<void, Client::WrappedError> Client::on_ready_to_read()
             break;
     }
 
-    m_request = HTTP::HttpRequest::from_raw_request(builder.to_byte_buffer());
+    m_request = HTTP::HttpRequest::from_raw_request(TRY(builder.to_byte_buffer()));
     if (!m_request.has_value())
         return {};
 
@@ -236,7 +237,7 @@ ErrorOr<JsonValue, Client::WrappedError> Client::read_body_as_json()
     size_t content_length = 0;
 
     for (auto const& header : m_request->headers()) {
-        if (header.name.equals_ignoring_case("Content-Length"sv)) {
+        if (header.name.equals_ignoring_ascii_case("Content-Length"sv)) {
             content_length = header.value.to_uint<size_t>(TrimWhitespace::Yes).value_or(0);
             break;
         }
@@ -257,8 +258,8 @@ ErrorOr<void, Client::WrappedError> Client::handle_request(JsonValue body)
             dbgln("Body: {}", body.to_deprecated_string());
     }
 
-    auto const& [handler, parameters] = TRY(match_route(*m_request));
-    auto result = TRY((*handler)(*this, parameters, move(body)));
+    auto [handler, parameters] = TRY(match_route(*m_request));
+    auto result = TRY((*handler)(*this, move(parameters), move(body)));
     return send_success_response(move(result));
 }
 
@@ -277,7 +278,7 @@ ErrorOr<void, Client::WrappedError> Client::send_success_response(JsonValue resu
     builder.appendff("Content-Length: {}\r\n", content.length());
     builder.append("\r\n"sv);
 
-    auto builder_contents = builder.to_byte_buffer();
+    auto builder_contents = TRY(builder.to_byte_buffer());
     TRY(m_socket->write(builder_contents));
 
     while (!content.is_empty()) {
@@ -286,8 +287,8 @@ ErrorOr<void, Client::WrappedError> Client::send_success_response(JsonValue resu
     }
 
     bool keep_alive = false;
-    if (auto it = m_request->headers().find_if([](auto& header) { return header.name.equals_ignoring_case("Connection"sv); }); !it.is_end())
-        keep_alive = it->value.trim_whitespace().equals_ignoring_case("keep-alive"sv);
+    if (auto it = m_request->headers().find_if([](auto& header) { return header.name.equals_ignoring_ascii_case("Connection"sv); }); !it.is_end())
+        keep_alive = it->value.trim_whitespace().equals_ignoring_ascii_case("keep-alive"sv);
 
     if (!keep_alive)
         die();
@@ -318,8 +319,8 @@ ErrorOr<void, Client::WrappedError> Client::send_error_response(Error const& err
     header_builder.appendff("Content-Length: {}\r\n", content_builder.length());
     header_builder.append("\r\n"sv);
 
-    TRY(m_socket->write(header_builder.to_byte_buffer()));
-    TRY(m_socket->write(content_builder.to_byte_buffer()));
+    TRY(m_socket->write(TRY(header_builder.to_byte_buffer())));
+    TRY(m_socket->write(TRY(content_builder.to_byte_buffer())));
 
     log_response(error.http_status);
     return {};

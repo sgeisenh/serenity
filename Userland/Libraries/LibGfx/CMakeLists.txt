@@ -10,6 +10,7 @@ set(SOURCES
     Color.cpp
     CursorParams.cpp
     DDSLoader.cpp
+    FillPathImplementation.cpp
     Filters/ColorBlindnessFilter.cpp
     Filters/FastBoxBlurFilter.cpp
     Filters/LumaFilter.cpp
@@ -28,12 +29,14 @@ set(SOURCES
     Font/WOFF/Font.cpp
     GradientPainting.cpp
     GIFLoader.cpp
+    ICC/BinaryWriter.cpp
     ICC/Profile.cpp
     ICC/Tags.cpp
     ICC/TagTypes.cpp
+    ICC/WellKnownProfiles.cpp
     ICOLoader.cpp
     ImageDecoder.cpp
-    JPGLoader.cpp
+    JPEGLoader.cpp
     PBMLoader.cpp
     PGMLoader.cpp
     PNGLoader.cpp
@@ -54,8 +57,9 @@ set(SOURCES
     TextLayout.cpp
     TGALoader.cpp
     Triangle.cpp
+    WebPLoader.cpp
     WindowTheme.cpp
 )
 
 serenity_lib(LibGfx gfx)
-target_link_libraries(LibGfx PRIVATE LibCompress LibCore LibCrypto LibTextCodec LibIPC)
+target_link_libraries(LibGfx PRIVATE LibCompress LibCore LibCrypto LibTextCodec LibIPC LibUnicode)

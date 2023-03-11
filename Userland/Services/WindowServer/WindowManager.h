@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -201,13 +201,14 @@ public:
         return nullptr;
     }
 
-    bool update_theme(DeprecatedString theme_path, DeprecatedString theme_name, bool keep_desktop_background);
+    bool update_theme(DeprecatedString theme_path, DeprecatedString theme_name, bool keep_desktop_background, Optional<DeprecatedString> const& color_scheme_path);
     void invalidate_after_theme_or_font_change();
 
     bool set_theme_override(Core::AnonymousBuffer const& theme_override);
     Optional<Core::AnonymousBuffer> get_theme_override() const;
     void clear_theme_override();
     bool is_theme_overridden() { return m_theme_overridden; }
+    Optional<DeprecatedString> get_preferred_color_scheme() { return m_preferred_color_scheme; }
 
     bool set_hovered_window(Window*);
     void deliver_mouse_event(Window&, MouseEvent const&);
@@ -259,11 +260,11 @@ public:
     void switch_to_window_stack(u32 row, u32 col, Window* carry = nullptr, bool show_overlay = true)
     {
         if (row < window_stack_rows() && col < window_stack_columns())
-            switch_to_window_stack(m_window_stacks[row][col], carry, show_overlay);
+            switch_to_window_stack(*(*m_window_stacks[row])[col], carry, show_overlay);
     }
 
     size_t window_stack_rows() const { return m_window_stacks.size(); }
-    size_t window_stack_columns() const { return m_window_stacks[0].size(); }
+    size_t window_stack_columns() const { return m_window_stacks[0]->size(); }
 
     bool apply_workspace_settings(unsigned rows, unsigned columns, bool save);
 
@@ -277,8 +278,8 @@ public:
     IterationDecision for_each_window_stack(F f)
     {
         for (auto& row : m_window_stacks) {
-            for (auto& stack : row) {
-                IterationDecision decision = f(stack);
+            for (auto& stack : *row) {
+                IterationDecision decision = f(*stack);
                 if (decision != IterationDecision::Continue)
                     return decision;
             }
@@ -339,7 +340,7 @@ public:
     u8 last_processed_buttons() { return m_last_processed_buttons; }
 
 private:
-    explicit WindowManager(Gfx::PaletteImpl const&);
+    explicit WindowManager(Gfx::PaletteImpl&);
 
     void notify_new_active_window(Window&);
     void notify_previous_active_window(Window&);
@@ -371,25 +372,25 @@ private:
 
     [[nodiscard]] static WindowStack& get_rendering_window_stacks(WindowStack*&);
 
-    RefPtr<Cursor> m_hidden_cursor;
-    RefPtr<Cursor> m_arrow_cursor;
-    RefPtr<Cursor> m_hand_cursor;
-    RefPtr<Cursor> m_help_cursor;
-    RefPtr<Cursor> m_resize_horizontally_cursor;
-    RefPtr<Cursor> m_resize_vertically_cursor;
-    RefPtr<Cursor> m_resize_diagonally_tlbr_cursor;
-    RefPtr<Cursor> m_resize_diagonally_bltr_cursor;
-    RefPtr<Cursor> m_resize_column_cursor;
-    RefPtr<Cursor> m_resize_row_cursor;
-    RefPtr<Cursor> m_i_beam_cursor;
-    RefPtr<Cursor> m_disallowed_cursor;
-    RefPtr<Cursor> m_move_cursor;
-    RefPtr<Cursor> m_drag_cursor;
-    RefPtr<Cursor> m_drag_copy_cursor;
-    RefPtr<Cursor> m_wait_cursor;
-    RefPtr<Cursor> m_crosshair_cursor;
-    RefPtr<Cursor> m_eyedropper_cursor;
-    RefPtr<Cursor> m_zoom_cursor;
+    RefPtr<Cursor const> m_hidden_cursor;
+    RefPtr<Cursor const> m_arrow_cursor;
+    RefPtr<Cursor const> m_hand_cursor;
+    RefPtr<Cursor const> m_help_cursor;
+    RefPtr<Cursor const> m_resize_horizontally_cursor;
+    RefPtr<Cursor const> m_resize_vertically_cursor;
+    RefPtr<Cursor const> m_resize_diagonally_tlbr_cursor;
+    RefPtr<Cursor const> m_resize_diagonally_bltr_cursor;
+    RefPtr<Cursor const> m_resize_column_cursor;
+    RefPtr<Cursor const> m_resize_row_cursor;
+    RefPtr<Cursor const> m_i_beam_cursor;
+    RefPtr<Cursor const> m_disallowed_cursor;
+    RefPtr<Cursor const> m_move_cursor;
+    RefPtr<Cursor const> m_drag_cursor;
+    RefPtr<Cursor const> m_drag_copy_cursor;
+    RefPtr<Cursor const> m_wait_cursor;
+    RefPtr<Cursor const> m_crosshair_cursor;
+    RefPtr<Cursor const> m_eyedropper_cursor;
+    RefPtr<Cursor const> m_zoom_cursor;
     int m_cursor_highlight_radius { 0 };
     Gfx::Color m_cursor_highlight_color;
     bool m_cursor_highlight_enabled { false };
@@ -397,7 +398,7 @@ private:
     RefPtr<MultiScaleBitmaps> m_overlay_rect_shadow;
 
     // Setup 2 rows 1 column by default
-    NonnullOwnPtrVector<NonnullOwnPtrVector<WindowStack, default_window_stack_columns>, default_window_stack_rows> m_window_stacks;
+    Vector<NonnullOwnPtr<Vector<NonnullOwnPtr<WindowStack>, default_window_stack_columns>>, default_window_stack_rows> m_window_stacks;
     WindowStack* m_current_window_stack { nullptr };
 
     struct DoubleClickInfo {
@@ -439,6 +440,7 @@ private:
     bool m_mouse_buttons_switched { false };
     bool m_natural_scroll { false };
     bool m_theme_overridden { false };
+    Optional<DeprecatedString> m_preferred_color_scheme { OptionalNone() };
 
     WeakPtr<Window> m_hovered_window;
     WeakPtr<Window> m_highlight_window;
@@ -477,7 +479,7 @@ private:
     DeprecatedString m_dnd_text;
     bool m_dnd_accepts_drag { false };
 
-    RefPtr<Core::MimeData> m_dnd_mime_data;
+    RefPtr<Core::MimeData const> m_dnd_mime_data;
 
     WindowStack* m_switching_to_window_stack { nullptr };
     Vector<WeakPtr<Window>, 4> m_carry_window_to_new_stack;

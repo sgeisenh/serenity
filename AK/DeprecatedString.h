@@ -18,7 +18,7 @@ namespace AK {
 
 // DeprecatedString is a convenience wrapper around StringImpl, suitable for passing
 // around as a value type. It's basically the same as passing around a
-// RefPtr<StringImpl>, with a bit of syntactic sugar.
+// RefPtr<StringImpl const>, with a bit of syntactic sugar.
 //
 // Note that StringImpl is an immutable object that cannot shrink or grow.
 // Its allocation size is snugly tailored to the specific string it contains.
@@ -48,7 +48,7 @@ public:
     }
 
     DeprecatedString(DeprecatedString const& other)
-        : m_impl(const_cast<DeprecatedString&>(other).m_impl)
+        : m_impl(other.m_impl)
     {
     }
 
@@ -73,21 +73,21 @@ public:
     }
 
     DeprecatedString(StringImpl const& impl)
-        : m_impl(const_cast<StringImpl&>(impl))
+        : m_impl(impl)
     {
     }
 
     DeprecatedString(StringImpl const* impl)
-        : m_impl(const_cast<StringImpl*>(impl))
+        : m_impl(impl)
     {
     }
 
-    DeprecatedString(RefPtr<StringImpl>&& impl)
+    DeprecatedString(RefPtr<StringImpl const>&& impl)
         : m_impl(move(impl))
     {
     }
 
-    DeprecatedString(NonnullRefPtr<StringImpl>&& impl)
+    DeprecatedString(NonnullRefPtr<StringImpl const>&& impl)
         : m_impl(move(impl))
     {
     }
@@ -148,7 +148,7 @@ public:
         return trimmed_view;
     }
 
-    [[nodiscard]] bool equals_ignoring_case(StringView) const;
+    [[nodiscard]] bool equals_ignoring_ascii_case(StringView) const;
 
     [[nodiscard]] bool contains(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
     [[nodiscard]] bool contains(char, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
@@ -234,7 +234,6 @@ public:
         return StringImpl::the_empty_stringimpl();
     }
 
-    [[nodiscard]] StringImpl* impl() { return m_impl.ptr(); }
     [[nodiscard]] StringImpl const* impl() const { return m_impl.ptr(); }
 
     DeprecatedString& operator=(DeprecatedString&& other)
@@ -277,7 +276,7 @@ public:
     {
         if (buffer.is_empty())
             return empty();
-        return DeprecatedString((char const*)buffer.data(), buffer.size(), should_chomp);
+        return DeprecatedString(reinterpret_cast<char const*>(buffer.data()), buffer.size(), should_chomp);
     }
 
     [[nodiscard]] static DeprecatedString vformatted(StringView fmtstr, TypeErasedFormatParams&);
@@ -311,19 +310,19 @@ public:
     }
 
     template<typename... Ts>
-    [[nodiscard]] ALWAYS_INLINE constexpr bool is_one_of_ignoring_case(Ts&&... strings) const
+    [[nodiscard]] ALWAYS_INLINE constexpr bool is_one_of_ignoring_ascii_case(Ts&&... strings) const
     {
         return (... ||
                 [this, &strings]() -> bool {
             if constexpr (requires(Ts a) { a.view()->StringView; })
-                return this->equals_ignoring_case(forward<Ts>(strings.view()));
+                return this->equals_ignoring_ascii_case(forward<Ts>(strings.view()));
             else
-                return this->equals_ignoring_case(forward<Ts>(strings));
+                return this->equals_ignoring_ascii_case(forward<Ts>(strings));
         }());
     }
 
 private:
-    RefPtr<StringImpl> m_impl;
+    RefPtr<StringImpl const> m_impl;
 };
 
 template<>
@@ -331,14 +330,13 @@ struct Traits<DeprecatedString> : public GenericTraits<DeprecatedString> {
     static unsigned hash(DeprecatedString const& s) { return s.impl() ? s.impl()->hash() : 0; }
 };
 
+// FIXME: Rename this to indicate that it's about ASCII-only case insensitivity.
 struct CaseInsensitiveStringTraits : public Traits<DeprecatedString> {
     static unsigned hash(DeprecatedString const& s) { return s.impl() ? s.impl()->case_insensitive_hash() : 0; }
-    static bool equals(DeprecatedString const& a, DeprecatedString const& b) { return a.equals_ignoring_case(b); }
+    static bool equals(DeprecatedString const& a, DeprecatedString const& b) { return a.equals_ignoring_ascii_case(b); }
 };
 
 DeprecatedString escape_html_entities(StringView html);
-
-DeprecatedInputStream& operator>>(DeprecatedInputStream& stream, DeprecatedString& string);
 
 }
 

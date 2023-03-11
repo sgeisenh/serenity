@@ -70,9 +70,7 @@ NotificationWindow::NotificationWindow(i32 client_id, DeprecatedString const& te
     auto widget = set_main_widget<GUI::Widget>().release_value_but_fixme_should_propagate_errors();
 
     widget->set_fill_with_background_color(true);
-    widget->set_layout<GUI::HorizontalBoxLayout>();
-    widget->layout()->set_margins(8);
-    widget->layout()->set_spacing(6);
+    widget->set_layout<GUI::HorizontalBoxLayout>(8, 6);
 
     m_image = &widget->add<GUI::ImageWidget>();
     m_image->set_visible(icon.is_valid());
@@ -108,7 +106,7 @@ RefPtr<NotificationWindow> NotificationWindow::get_window_by_id(i32 id)
 
 void NotificationWindow::resize_to_fit_text()
 {
-    auto line_height = m_text_label->font().glyph_height();
+    auto line_height = m_text_label->font().pixel_size_rounded_up();
     auto total_height = m_text_label->text_calculated_preferred_height();
 
     m_text_label->set_fixed_height(total_height);

@@ -9,18 +9,18 @@
 
 namespace Web::HTML {
 
-SubmitEvent* SubmitEvent::create(JS::Realm& realm, DeprecatedFlyString const& event_name, SubmitEventInit const& event_init)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<SubmitEvent>> SubmitEvent::create(JS::Realm& realm, FlyString const& event_name, SubmitEventInit const& event_init)
 {
-    return realm.heap().allocate<SubmitEvent>(realm, realm, event_name, event_init).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<SubmitEvent>(realm, realm, event_name, event_init));
 }
 
-SubmitEvent* SubmitEvent::construct_impl(JS::Realm& realm, DeprecatedFlyString const& event_name, SubmitEventInit const& event_init)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<SubmitEvent>> SubmitEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, SubmitEventInit const& event_init)
 {
     return create(realm, event_name, event_init);
 }
 
-SubmitEvent::SubmitEvent(JS::Realm& realm, DeprecatedFlyString const& event_name, SubmitEventInit const& event_init)
-    : DOM::Event(realm, event_name, event_init)
+SubmitEvent::SubmitEvent(JS::Realm& realm, FlyString const& event_name, SubmitEventInit const& event_init)
+    : DOM::Event(realm, event_name.to_deprecated_fly_string(), event_init)
     , m_submitter(event_init.submitter)
 {
 }

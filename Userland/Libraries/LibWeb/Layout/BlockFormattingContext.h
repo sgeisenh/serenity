@@ -24,8 +24,6 @@ public:
     virtual void run(Box const&, LayoutMode, AvailableSpace const&) override;
     virtual CSSPixels automatic_content_height() const override;
 
-    bool is_initial() const;
-
     auto const& left_side_floats() const { return m_left_floats; }
     auto const& right_side_floats() const { return m_right_floats; }
 
@@ -46,7 +44,7 @@ public:
 
     void layout_floating_box(Box const& child, BlockContainer const& containing_block, LayoutMode, AvailableSpace const&, CSSPixels y, LineBuilder* = nullptr);
 
-    void layout_block_level_box(Box const&, BlockContainer const&, LayoutMode, CSSPixels& bottom_of_lowest_margin_box, AvailableSpace const&, CSSPixels& current_y);
+    void layout_block_level_box(Box const&, BlockContainer const&, LayoutMode, CSSPixels& bottom_of_lowest_margin_box, AvailableSpace const&);
 
     virtual bool can_determine_size_of_child() const override { return true; }
     virtual void determine_width_of_child(Box const&, AvailableSpace const&) override;
@@ -61,7 +59,7 @@ private:
 
     CSSPixels compute_width_for_table_wrapper(Box const&, AvailableSpace const&);
 
-    void layout_initial_containing_block(LayoutMode, AvailableSpace const&);
+    void layout_viewport(LayoutMode, AvailableSpace const&);
 
     void layout_block_level_children(BlockContainer const&, LayoutMode, AvailableSpace const&);
     void layout_inline_children(BlockContainer const&, LayoutMode, AvailableSpace const&);
@@ -149,6 +147,8 @@ private:
             current_collapsible_margins.clear();
         }
     };
+
+    Optional<CSSPixels> m_y_offset_of_current_block_container;
 
     BlockMarginState m_margin_state;
 

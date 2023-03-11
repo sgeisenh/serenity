@@ -107,7 +107,7 @@ void SVGPathElement::parse_attribute(DeprecatedFlyString const& name, Deprecated
     }
 }
 
-Gfx::Path path_from_path_instructions(Span<PathInstruction const> instructions)
+Gfx::Path path_from_path_instructions(ReadonlySpan<PathInstruction> instructions)
 {
     Gfx::Path path;
     Optional<Gfx::FloatPoint> previous_control_point;
@@ -115,7 +115,7 @@ Gfx::Path path_from_path_instructions(Span<PathInstruction const> instructions)
 
     for (auto& instruction : instructions) {
         // If the first path element uses relative coordinates, we treat them as absolute by making them relative to (0, 0).
-        auto last_point = path.segments().is_empty() ? Gfx::FloatPoint { 0, 0 } : path.segments().last().point();
+        auto last_point = path.segments().is_empty() ? Gfx::FloatPoint { 0, 0 } : path.segments().last()->point();
 
         auto& absolute = instruction.absolute;
         auto& data = instruction.data;

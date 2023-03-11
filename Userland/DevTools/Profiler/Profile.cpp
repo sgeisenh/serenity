@@ -11,12 +11,10 @@
 #include "SourceModel.h"
 #include <AK/HashTable.h>
 #include <AK/LexicalPath.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/QuickSort.h>
 #include <AK/RefPtr.h>
 #include <AK/Try.h>
 #include <LibCore/MappedFile.h>
-#include <LibCore/Stream.h>
 #include <LibELF/Image.h>
 #include <LibSymbolication/Symbolication.h>
 #include <sys/stat.h>
@@ -236,7 +234,7 @@ OwnPtr<Debug::DebugInfo> g_kernel_debug_info;
 
 ErrorOr<NonnullOwnPtr<Profile>> Profile::load_from_perfcore_file(StringView path)
 {
-    auto file = TRY(Core::Stream::File::open(path, Core::Stream::OpenMode::Read));
+    auto file = TRY(Core::File::open(path, Core::File::OpenMode::Read));
 
     auto json = JsonValue::from_string(TRY(file->read_until_eof()));
     if (json.is_error() || !json.value().is_object())
@@ -269,7 +267,7 @@ ErrorOr<NonnullOwnPtr<Profile>> Profile::load_from_perfcore_file(StringView path
         return Error::from_string_literal("Malformed profile (events is not an array)");
     auto const& perf_events = events_value.value();
 
-    NonnullOwnPtrVector<Process> all_processes;
+    Vector<NonnullOwnPtr<Process>> all_processes;
     HashMap<pid_t, Process*> current_processes;
     Vector<Event> events;
     EventSerialNumber next_serial;
@@ -334,13 +332,13 @@ ErrorOr<NonnullOwnPtr<Profile>> Profile::load_from_perfcore_file(StringView path
                 .executable = executable,
             };
 
-            auto sampled_process = adopt_own(*new Process {
+            auto sampled_process = TRY(adopt_nonnull_own_or_enomem(new (nothrow) Process {
                 .pid = event.pid,
                 .executable = executable,
                 .basename = LexicalPath::basename(executable),
                 .start_valid = event.serial,
                 .end_valid = {},
-            });
+            }));
 
             current_processes.set(sampled_process->pid, sampled_process);
             all_processes.append(move(sampled_process));
@@ -356,13 +354,13 @@ ErrorOr<NonnullOwnPtr<Profile>> Profile::load_from_perfcore_file(StringView path
 
             current_processes.remove(event.pid);
 
-            auto sampled_process = adopt_own(*new Process {
+            auto sampled_process = TRY(adopt_nonnull_own_or_enomem(new (nothrow) Process {
                 .pid = event.pid,
                 .executable = executable,
                 .basename = LexicalPath::basename(executable),
                 .start_valid = event.serial,
                 .end_valid = {},
-            });
+            }));
 
             current_processes.set(sampled_process->pid, sampled_process);
             all_processes.append(move(sampled_process));
@@ -449,15 +447,15 @@ ErrorOr<NonnullOwnPtr<Profile>> Profile::load_from_perfcore_file(StringView path
         return Error::from_string_literal("No events captured (targeted process was never on CPU)");
 
     quick_sort(all_processes, [](auto& a, auto& b) {
-        if (a.pid == b.pid)
-            return a.start_valid < b.start_valid;
+        if (a->pid == b->pid)
+            return a->start_valid < b->start_valid;
 
-        return a.pid < b.pid;
+        return a->pid < b->pid;
     });
 
     Vector<Process> processes;
     for (auto& it : all_processes)
-        processes.append(move(it));
+        processes.append(move(*it));
 
     return adopt_nonnull_own_or_enomem(new (nothrow) Profile(move(processes), move(events)));
 }

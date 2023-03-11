@@ -10,7 +10,6 @@
 #include <AK/Types.h>
 #include <Kernel/FileSystem/FileSystem.h>
 #include <Kernel/Library/NonnullLockRefPtr.h>
-#include <Kernel/Library/NonnullLockRefPtrVector.h>
 #include <Kernel/Storage/DiskPartition.h>
 #include <Kernel/Storage/StorageController.h>
 #include <Kernel/Storage/StorageDevice.h>
@@ -52,6 +51,7 @@ private:
     void resolve_partition_from_boot_device_parameter(StorageDevice const& chosen_storage_device, StringView boot_device_prefix);
     void determine_boot_device_with_logical_unit_number();
     void determine_block_boot_device();
+    void determine_ramdisk_boot_device();
     void determine_nvme_boot_device();
     void determine_ata_boot_device();
     void determine_hardware_relative_boot_device(StringView relative_hardware_prefix, Function<bool(StorageDevice const&)> filter_device_callback);
@@ -60,13 +60,13 @@ private:
 
     void dump_storage_devices_and_partitions() const;
 
-    ErrorOr<NonnullOwnPtr<Partition::PartitionTable>> try_to_initialize_partition_table(StorageDevice const&) const;
+    ErrorOr<NonnullOwnPtr<Partition::PartitionTable>> try_to_initialize_partition_table(StorageDevice&) const;
 
     LockRefPtr<BlockDevice> boot_block_device() const;
 
     StringView m_boot_argument;
     LockWeakPtr<BlockDevice> m_boot_block_device;
-    NonnullLockRefPtrVector<StorageController> m_controllers;
+    Vector<NonnullLockRefPtr<StorageController>> m_controllers;
     IntrusiveList<&StorageDevice::m_list_node> m_storage_devices;
 };
 

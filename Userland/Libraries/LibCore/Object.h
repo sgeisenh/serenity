@@ -12,7 +12,6 @@
 #include <AK/HashMap.h>
 #include <AK/IntrusiveList.h>
 #include <AK/Noncopyable.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <AK/StringView.h>
 #include <AK/TypeCasts.h>
@@ -112,14 +111,14 @@ public:
     DeprecatedString const& name() const { return m_name; }
     void set_name(DeprecatedString name) { m_name = move(name); }
 
-    NonnullRefPtrVector<Object>& children() { return m_children; }
-    NonnullRefPtrVector<Object> const& children() const { return m_children; }
+    Vector<NonnullRefPtr<Object>>& children() { return m_children; }
+    Vector<NonnullRefPtr<Object>> const& children() const { return m_children; }
 
     template<typename Callback>
     void for_each_child(Callback callback)
     {
         for (auto& child : m_children) {
-            if (callback(child) == IterationDecision::Break)
+            if (callback(*child) == IterationDecision::Break)
                 return;
         }
     }
@@ -219,7 +218,7 @@ private:
     int m_timer_id { 0 };
     unsigned m_inspector_count { 0 };
     HashMap<DeprecatedString, NonnullOwnPtr<Property>> m_properties;
-    NonnullRefPtrVector<Object> m_children;
+    Vector<NonnullRefPtr<Object>> m_children;
     Function<bool(Core::Event&)> m_event_filter;
 };
 

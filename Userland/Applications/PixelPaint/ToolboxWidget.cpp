@@ -39,10 +39,7 @@ ToolboxWidget::ToolboxWidget()
     set_fill_with_background_color(true);
 
     set_fixed_width(26);
-
-    set_layout<GUI::VerticalBoxLayout>();
-    layout()->set_spacing(0);
-    layout()->set_margins(2);
+    set_layout<GUI::VerticalBoxLayout>(2, 0);
 
     m_action_group.set_exclusive(true);
     m_action_group.set_unchecking_allowed(false);
@@ -74,7 +71,7 @@ void ToolboxWidget::setup_tools()
         m_tools.append(move(tool));
         if (is_default_tool) {
             VERIFY(m_active_tool == nullptr);
-            m_active_tool = &m_tools[m_tools.size() - 1];
+            m_active_tool = m_tools[m_tools.size() - 1];
             action->set_checked(true);
         }
     };

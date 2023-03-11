@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -31,12 +31,12 @@ NonnullRefPtr<StyleProperties> StyleProperties::clone() const
     return adopt_ref(*new StyleProperties(*this));
 }
 
-void StyleProperties::set_property(CSS::PropertyID id, NonnullRefPtr<StyleValue> value)
+void StyleProperties::set_property(CSS::PropertyID id, NonnullRefPtr<StyleValue const> value)
 {
     m_property_values[to_underlying(id)] = move(value);
 }
 
-NonnullRefPtr<StyleValue> StyleProperties::property(CSS::PropertyID property_id) const
+NonnullRefPtr<StyleValue const> StyleProperties::property(CSS::PropertyID property_id) const
 {
     auto value = m_property_values[to_underlying(property_id)];
     // By the time we call this method, all properties have values assigned.
@@ -44,7 +44,7 @@ NonnullRefPtr<StyleValue> StyleProperties::property(CSS::PropertyID property_id)
     return value.release_nonnull();
 }
 
-RefPtr<StyleValue> StyleProperties::maybe_null_property(CSS::PropertyID property_id) const
+RefPtr<StyleValue const> StyleProperties::maybe_null_property(CSS::PropertyID property_id) const
 {
     return m_property_values[to_underlying(property_id)];
 }
@@ -68,7 +68,7 @@ CSS::Size StyleProperties::size_value(CSS::PropertyID id) const
     }
 
     if (value->is_calculated())
-        return CSS::Size::make_length(CSS::Length::make_calculated(value->as_calculated()));
+        return CSS::Size::make_length(CSS::Length::make_calculated(const_cast<CalculatedStyleValue&>(value->as_calculated())));
 
     if (value->is_percentage())
         return CSS::Size::make_percentage(value->as_percentage().percentage());
@@ -95,7 +95,7 @@ Optional<LengthPercentage> StyleProperties::length_percentage(CSS::PropertyID id
     auto value = property(id);
 
     if (value->is_calculated())
-        return LengthPercentage { value->as_calculated() };
+        return LengthPercentage { const_cast<CalculatedStyleValue&>(value->as_calculated()) };
 
     if (value->is_percentage())
         return value->as_percentage().percentage();
@@ -124,7 +124,7 @@ Color StyleProperties::color_or_fallback(CSS::PropertyID id, Layout::NodeWithSty
     return value->to_color(node);
 }
 
-NonnullRefPtr<Gfx::Font> StyleProperties::font_fallback(bool monospace, bool bold)
+NonnullRefPtr<Gfx::Font const> StyleProperties::font_fallback(bool monospace, bool bold)
 {
     if (monospace && bold)
         return Platform::FontPlugin::the().default_fixed_width_font().bold_variant();
@@ -161,7 +161,7 @@ CSSPixels StyleProperties::line_height(Layout::Node const& layout_node) const
     }
 
     if (line_height->is_calculated())
-        return CSS::Length::make_calculated(line_height->as_calculated()).to_px(layout_node);
+        return CSS::Length::make_calculated(const_cast<CalculatedStyleValue&>(line_height->as_calculated())).to_px(layout_node);
 
     return layout_node.font().pixel_metrics().line_spacing();
 }
@@ -193,7 +193,7 @@ float StyleProperties::opacity() const
             else
                 dbgln("Unable to resolve calc() as opacity (percentage): {}", value->to_string());
         } else {
-            auto maybe_number = value->as_calculated().resolve_number();
+            auto maybe_number = const_cast<CalculatedStyleValue&>(value->as_calculated()).resolve_number();
             if (maybe_number.has_value())
                 unclamped_opacity = maybe_number.value();
             else
@@ -296,21 +296,21 @@ Vector<CSS::Transformation> StyleProperties::transformations() const
     Vector<CSS::Transformation> transformations;
 
     for (auto& it : list.values()) {
-        if (!it.is_transformation())
+        if (!it->is_transformation())
             return {};
-        auto& transformation_style_value = it.as_transformation();
+        auto& transformation_style_value = it->as_transformation();
         CSS::Transformation transformation;
         transformation.function = transformation_style_value.transform_function();
         Vector<TransformValue> values;
         for (auto& transformation_value : transformation_style_value.values()) {
-            if (transformation_value.is_length()) {
-                values.append({ transformation_value.to_length() });
-            } else if (transformation_value.is_percentage()) {
-                values.append({ transformation_value.as_percentage().percentage() });
-            } else if (transformation_value.is_numeric()) {
-                values.append({ transformation_value.to_number() });
-            } else if (transformation_value.is_angle()) {
-                values.append({ transformation_value.as_angle().angle() });
+            if (transformation_value->is_length()) {
+                values.append({ transformation_value->to_length() });
+            } else if (transformation_value->is_percentage()) {
+                values.append({ transformation_value->as_percentage().percentage() });
+            } else if (transformation_value->is_numeric()) {
+                values.append({ transformation_value->to_number() });
+            } else if (transformation_value->is_angle()) {
+                values.append({ transformation_value->as_angle().angle() });
             } else {
                 dbgln("FIXME: Unsupported value in transform!");
             }
@@ -487,25 +487,25 @@ CSS::ContentData StyleProperties::content() const
         //        For now, we'll just assume strings since that is easiest.
         StringBuilder builder;
         for (auto const& item : content_style_value.content().values()) {
-            if (item.is_string()) {
-                builder.append(item.to_string().release_value_but_fixme_should_propagate_errors());
+            if (item->is_string()) {
+                builder.append(item->to_string().release_value_but_fixme_should_propagate_errors());
             } else {
                 // TODO: Implement quotes, counters, images, and other things.
             }
         }
         content_data.type = ContentData::Type::String;
-        content_data.data = builder.to_deprecated_string();
+        content_data.data = builder.to_string().release_value_but_fixme_should_propagate_errors();
 
         if (content_style_value.has_alt_text()) {
             StringBuilder alt_text_builder;
             for (auto const& item : content_style_value.alt_text()->values()) {
-                if (item.is_string()) {
-                    alt_text_builder.append(item.to_string().release_value_but_fixme_should_propagate_errors());
+                if (item->is_string()) {
+                    alt_text_builder.append(item->to_string().release_value_but_fixme_should_propagate_errors());
                 } else {
                     // TODO: Implement counters
                 }
             }
-            content_data.alt_text = alt_text_builder.to_deprecated_string();
+            content_data.alt_text = alt_text_builder.to_string().release_value_but_fixme_should_propagate_errors();
         }
 
         return content_data;
@@ -592,7 +592,7 @@ Vector<CSS::TextDecorationLine> StyleProperties::text_decoration_line() const
         Vector<CSS::TextDecorationLine> lines;
         auto& values = value->as_value_list().values();
         for (auto const& item : values) {
-            lines.append(value_id_to_text_decoration_line(item.to_identifier()).value());
+            lines.append(value_id_to_text_decoration_line(item->to_identifier()).value());
         }
         return lines;
     }
@@ -652,7 +652,7 @@ Vector<ShadowData> StyleProperties::shadow(PropertyID property_id) const
         Vector<ShadowData> shadow_data;
         shadow_data.ensure_capacity(value_list.size());
         for (auto const& layer_value : value_list.values())
-            shadow_data.append(make_shadow_data(layer_value.as_shadow()));
+            shadow_data.append(make_shadow_data(layer_value->as_shadow()));
 
         return shadow_data;
     }

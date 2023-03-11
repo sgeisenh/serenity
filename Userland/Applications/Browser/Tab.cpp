@@ -37,7 +37,7 @@
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/SyntaxHighlighter/SyntaxHighlighter.h>
 #include <LibWeb/Layout/BlockContainer.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
+#include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWebView/OutOfProcessWebView.h>
 
@@ -466,6 +466,10 @@ Tab::Tab(BrowserWindow& window)
     view().on_forward_button = [this] {
         if (m_history.can_go_forward())
             go_forward();
+    };
+
+    view().on_close = [this] {
+        on_tab_close_request(*this);
     };
 
     m_tab_context_menu = GUI::Menu::construct();

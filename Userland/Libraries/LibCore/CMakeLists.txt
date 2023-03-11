@@ -4,7 +4,9 @@ set(SOURCES
     Command.cpp
     ConfigFile.cpp
     DateTime.cpp
+    DeprecatedFile.cpp
     Directory.cpp
+    DirectoryEntry.cpp
     DirIterator.cpp
     ElapsedTimer.cpp
     Event.cpp
@@ -22,9 +24,9 @@ set(SOURCES
     Property.cpp
     SecretString.cpp
     SessionManagement.cpp
+    Socket.cpp
     SOCKSProxyClient.cpp
     StandardPaths.cpp
-    Stream.cpp
     System.cpp
     SystemServerTakeover.cpp
     TCPServer.cpp

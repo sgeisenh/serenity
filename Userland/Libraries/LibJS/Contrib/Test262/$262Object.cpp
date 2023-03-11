@@ -60,12 +60,12 @@ JS_DEFINE_NATIVE_FUNCTION($262Object::clear_kept_objects)
 
 JS_DEFINE_NATIVE_FUNCTION($262Object::create_realm)
 {
-    auto realm = Realm::create(vm);
+    auto realm = MUST_OR_THROW_OOM(Realm::create(vm));
     auto realm_global_object = vm.heap().allocate_without_realm<GlobalObject>(*realm);
     VERIFY(realm_global_object);
     realm->set_global_object(realm_global_object, nullptr);
     set_default_global_bindings(*realm);
-    realm_global_object->initialize(*realm);
+    MUST_OR_THROW_OOM(realm_global_object->initialize(*realm));
     return Value(realm_global_object->$262());
 }
 
@@ -98,7 +98,7 @@ JS_DEFINE_NATIVE_FUNCTION($262Object::eval_script)
         auto& error = script_or_error.error()[0];
 
         // b. Return Completion { [[Type]]: throw, [[Value]]: error, [[Target]]: empty }.
-        return vm.throw_completion<SyntaxError>(error.to_deprecated_string());
+        return vm.throw_completion<SyntaxError>(TRY_OR_THROW_OOM(vm, error.to_string()));
     }
 
     // 5. Let status be ScriptEvaluation(s).

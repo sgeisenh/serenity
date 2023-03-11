@@ -17,9 +17,9 @@
 
 namespace Web::CSS {
 
-CSSRuleList* CSSRuleList::create(JS::Realm& realm, JS::MarkedVector<CSSRule*> const& rules)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSRuleList>> CSSRuleList::create(JS::Realm& realm, JS::MarkedVector<CSSRule*> const& rules)
 {
-    auto rule_list = realm.heap().allocate<CSSRuleList>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
+    auto rule_list = MUST_OR_THROW_OOM(realm.heap().allocate<CSSRuleList>(realm, realm));
     for (auto* rule : rules)
         rule_list->m_rules.append(*rule);
     return rule_list;
@@ -30,9 +30,9 @@ CSSRuleList::CSSRuleList(JS::Realm& realm)
 {
 }
 
-CSSRuleList* CSSRuleList::create_empty(JS::Realm& realm)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSRuleList>> CSSRuleList::create_empty(JS::Realm& realm)
 {
-    return realm.heap().allocate<CSSRuleList>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<CSSRuleList>(realm, realm));
 }
 
 JS::ThrowCompletionOr<void> CSSRuleList::initialize(JS::Realm& realm)
@@ -183,7 +183,7 @@ bool CSSRuleList::evaluate_media_queries(HTML::Window const& window)
     return any_media_queries_changed_match_state;
 }
 
-JS::Value CSSRuleList::item_value(size_t index) const
+WebIDL::ExceptionOr<JS::Value> CSSRuleList::item_value(size_t index) const
 {
     return item(index);
 }

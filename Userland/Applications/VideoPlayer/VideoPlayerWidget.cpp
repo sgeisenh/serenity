@@ -35,8 +35,21 @@ ErrorOr<void> VideoPlayerWidget::setup_interface()
 {
     m_video_display = find_descendant_of_type_named<VideoPlayer::VideoFrameWidget>("video_frame");
     m_video_display->on_click = [&]() { toggle_pause(); };
+    m_video_display->on_doubleclick = [&]() { toggle_fullscreen(); };
 
     m_seek_slider = find_descendant_of_type_named<GUI::HorizontalSlider>("seek_slider");
+    m_seek_slider->on_drag_start = [&]() {
+        if (!m_playback_manager)
+            return;
+        m_was_playing_before_seek = m_playback_manager->is_playing();
+        m_playback_manager->pause_playback();
+    };
+    m_seek_slider->on_drag_end = [&]() {
+        if (!m_playback_manager || !m_was_playing_before_seek)
+            return;
+        m_was_playing_before_seek = false;
+        m_playback_manager->resume_playback();
+    };
     m_seek_slider->on_change = [&](int value) {
         if (!m_playback_manager)
             return;
@@ -44,8 +57,9 @@ ErrorOr<void> VideoPlayerWidget::setup_interface()
         auto progress = value / static_cast<double>(m_seek_slider->max());
         auto duration = m_playback_manager->duration().to_milliseconds();
         Time timestamp = Time::from_milliseconds(static_cast<i64>(round(progress * static_cast<double>(duration))));
-        set_current_timestamp(timestamp);
-        m_playback_manager->seek_to_timestamp(timestamp);
+        auto seek_mode_to_use = m_seek_slider->knob_dragging() ? seek_mode() : Video::PlaybackManager::SeekMode::Accurate;
+        m_playback_manager->seek_to_timestamp(timestamp, seek_mode_to_use);
+        set_current_timestamp(m_playback_manager->current_playback_time());
     };
 
     m_play_icon = TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/play.png"sv));
@@ -55,14 +69,36 @@ ErrorOr<void> VideoPlayerWidget::setup_interface()
         toggle_pause();
     });
 
-    m_cycle_sizing_modes_action = GUI::Action::create("Sizing", [&](auto&) {
-        cycle_sizing_modes();
+    m_cycle_sizing_modes_action = GUI::Action::create(
+        "Sizing", TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/fit-image-to-view.png"sv)), [&](auto&) {
+            cycle_sizing_modes();
+        });
+
+    m_toggle_fullscreen_action = GUI::CommonActions::make_fullscreen_action([&](auto&) {
+        toggle_fullscreen();
     });
 
     m_timestamp_label = find_descendant_of_type_named<GUI::Label>("timestamp");
     m_volume_slider = find_descendant_of_type_named<GUI::HorizontalSlider>("volume_slider");
     find_descendant_of_type_named<GUI::Button>("playback")->set_action(*m_play_pause_action);
     find_descendant_of_type_named<GUI::Button>("sizing")->set_action(*m_cycle_sizing_modes_action);
+    find_descendant_of_type_named<GUI::Button>("fullscreen")->set_action(*m_toggle_fullscreen_action);
+
+    m_size_fit_action = GUI::Action::create_checkable("&Fit", [&](auto&) {
+        m_video_display->set_sizing_mode(VideoSizingMode::Fit);
+    });
+
+    m_size_fill_action = GUI::Action::create_checkable("Fi&ll", [&](auto&) {
+        m_video_display->set_sizing_mode(VideoSizingMode::Fill);
+    });
+
+    m_size_stretch_action = GUI::Action::create_checkable("&Stretch", [&](auto&) {
+        m_video_display->set_sizing_mode(VideoSizingMode::Stretch);
+    });
+
+    m_size_fullsize_action = GUI::Action::create_checkable("F&ull Size", [&](auto&) {
+        m_video_display->set_sizing_mode(VideoSizingMode::FullSize);
+    });
 
     return {};
 }
@@ -88,7 +124,6 @@ void VideoPlayerWidget::open_file(StringView filename)
     close_file();
     m_playback_manager = load_file_result.release_value();
     update_seek_slider_max();
-    update_seek_mode();
     resume_playback();
 }
 
@@ -103,7 +138,7 @@ void VideoPlayerWidget::update_play_pause_icon()
 
     m_play_pause_action->set_enabled(true);
 
-    if (m_playback_manager->is_playing()) {
+    if (m_playback_manager->is_playing() || m_was_playing_before_seek) {
         m_play_pause_action->set_icon(m_pause_icon);
         m_play_pause_action->set_text("Pause"sv);
     } else {
@@ -114,18 +149,16 @@ void VideoPlayerWidget::update_play_pause_icon()
 
 void VideoPlayerWidget::resume_playback()
 {
-    if (!m_playback_manager)
+    if (!m_playback_manager || m_seek_slider->knob_dragging())
         return;
     m_playback_manager->resume_playback();
-    update_play_pause_icon();
 }
 
 void VideoPlayerWidget::pause_playback()
 {
-    if (!m_playback_manager)
+    if (!m_playback_manager || m_seek_slider->knob_dragging())
         return;
     m_playback_manager->pause_playback();
-    update_play_pause_icon();
 }
 
 void VideoPlayerWidget::toggle_pause()
@@ -222,9 +255,11 @@ void VideoPlayerWidget::event(Core::Event& event)
         set_current_timestamp(m_playback_manager->current_playback_time());
 
         frame_event.accept();
-    } else if (event.type() == Video::EventType::PlaybackStatusChange) {
+    } else if (event.type() == Video::EventType::PlaybackStateChange) {
         update_play_pause_icon();
         event.accept();
+    } else if (event.type() == Video::EventType::FatalPlaybackError) {
+        close_file();
     }
 
     Widget::event(event);
@@ -235,7 +270,37 @@ void VideoPlayerWidget::cycle_sizing_modes()
     auto sizing_mode = m_video_display->sizing_mode();
     sizing_mode = static_cast<VideoSizingMode>((to_underlying(sizing_mode) + 1) % to_underlying(VideoSizingMode::Sentinel));
     m_video_display->set_sizing_mode(sizing_mode);
-    m_video_display->update();
+
+    switch (sizing_mode) {
+    case VideoSizingMode::Fit:
+        m_size_fit_action->set_checked(true);
+        break;
+
+    case VideoSizingMode::Fill:
+        m_size_fill_action->set_checked(true);
+        break;
+
+    case VideoSizingMode::Stretch:
+        m_size_stretch_action->set_checked(true);
+        break;
+
+    case VideoSizingMode::FullSize:
+        m_size_fullsize_action->set_checked(true);
+        break;
+
+    case VideoSizingMode::Sentinel:
+        break;
+    }
+}
+
+void VideoPlayerWidget::toggle_fullscreen()
+{
+    auto* parent_window = window();
+    parent_window->set_fullscreen(!parent_window->is_fullscreen());
+    auto* bottom_container = find_descendant_of_type_named<GUI::Widget>("bottom_container");
+    bottom_container->set_visible(!parent_window->is_fullscreen());
+    auto* video_frame = find_descendant_of_type_named<VideoFrameWidget>("video_frame");
+    video_frame->set_frame_thickness(parent_window->is_fullscreen() ? 0 : 2);
 }
 
 void VideoPlayerWidget::update_title()
@@ -263,13 +328,6 @@ void VideoPlayerWidget::set_seek_mode(Video::PlaybackManager::SeekMode seek_mode
     m_use_fast_seeking->set_checked(seek_mode == Video::PlaybackManager::SeekMode::Fast);
 }
 
-void VideoPlayerWidget::update_seek_mode()
-{
-    if (!m_playback_manager)
-        return;
-    m_playback_manager->set_seek_mode(seek_mode());
-}
-
 ErrorOr<void> VideoPlayerWidget::initialize_menubar(GUI::Window& window)
 {
     // File menu
@@ -289,11 +347,29 @@ ErrorOr<void> VideoPlayerWidget::initialize_menubar(GUI::Window& window)
 
     // FIXME: Maybe seek mode should be in an options dialog instead. The playback menu may get crowded.
     //        For now, leave it here for convenience.
-    m_use_fast_seeking = GUI::Action::create_checkable("&Fast Seeking", [&](auto&) {
-        update_seek_mode();
-    });
+    m_use_fast_seeking = GUI::Action::create_checkable("&Fast Seeking", [&](auto&) {});
     TRY(playback_menu->try_add_action(*m_use_fast_seeking));
     set_seek_mode(Video::PlaybackManager::DEFAULT_SEEK_MODE);
+
+    // View menu
+    auto view_menu = TRY(window.try_add_menu("&View"));
+    TRY(view_menu->try_add_action(*m_toggle_fullscreen_action));
+
+    auto sizing_mode_menu = TRY(view_menu->try_add_submenu("&Sizing mode"));
+    sizing_mode_menu->set_icon(TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/fit-image-to-view.png"sv)));
+
+    m_sizing_mode_group = make<GUI::ActionGroup>();
+    m_sizing_mode_group->set_exclusive(true);
+    m_sizing_mode_group->add_action(*m_size_fit_action);
+    m_sizing_mode_group->add_action(*m_size_fill_action);
+    m_sizing_mode_group->add_action(*m_size_stretch_action);
+    m_sizing_mode_group->add_action(*m_size_fullsize_action);
+    m_size_fit_action->set_checked(true);
+
+    TRY(sizing_mode_menu->try_add_action(*m_size_fit_action));
+    TRY(sizing_mode_menu->try_add_action(*m_size_fill_action));
+    TRY(sizing_mode_menu->try_add_action(*m_size_stretch_action));
+    TRY(sizing_mode_menu->try_add_action(*m_size_fullsize_action));
 
     // Help menu
     auto help_menu = TRY(window.try_add_menu("&Help"));

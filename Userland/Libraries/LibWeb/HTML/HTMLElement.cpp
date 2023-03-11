@@ -7,6 +7,7 @@
 #include <AK/StringBuilder.h>
 #include <LibJS/Interpreter.h>
 #include <LibWeb/ARIA/Roles.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/IDLEventListener.h>
 #include <LibWeb/DOM/ShadowRoot.h>
@@ -45,7 +46,9 @@ JS::ThrowCompletionOr<void> HTMLElement::initialize(JS::Realm& realm)
     MUST_OR_THROW_OOM(Base::initialize(realm));
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLElementPrototype>(realm, "HTMLElement"));
 
-    m_dataset = DOMStringMap::create(*this);
+    m_dataset = TRY(Bindings::throw_dom_exception_if_needed(realm.vm(), [&]() {
+        return DOMStringMap::create(*this);
+    }));
 
     return {};
 }
@@ -61,7 +64,7 @@ DeprecatedString HTMLElement::dir() const
 {
     auto dir = attribute(HTML::AttributeNames::dir);
 #define __ENUMERATE_HTML_ELEMENT_DIR_ATTRIBUTE(keyword) \
-    if (dir.equals_ignoring_case(#keyword##sv))         \
+    if (dir.equals_ignoring_ascii_case(#keyword##sv))   \
         return #keyword##sv;
     ENUMERATE_HTML_ELEMENT_DIR_ATTRIBUTES
 #undef __ENUMERATE_HTML_ELEMENT_DIR_ATTRIBUTE
@@ -78,10 +81,10 @@ HTMLElement::ContentEditableState HTMLElement::content_editable_state() const
 {
     auto contenteditable = attribute(HTML::AttributeNames::contenteditable);
     // "true", an empty string or a missing value map to the "true" state.
-    if ((!contenteditable.is_null() && contenteditable.is_empty()) || contenteditable.equals_ignoring_case("true"sv))
+    if ((!contenteditable.is_null() && contenteditable.is_empty()) || contenteditable.equals_ignoring_ascii_case("true"sv))
         return ContentEditableState::True;
     // "false" maps to the "false" state.
-    if (contenteditable.equals_ignoring_case("false"sv))
+    if (contenteditable.equals_ignoring_ascii_case("false"sv))
         return ContentEditableState::False;
     // Having no such attribute or an invalid value maps to the "inherit" state.
     return ContentEditableState::Inherit;
@@ -118,15 +121,15 @@ DeprecatedString HTMLElement::content_editable() const
 // https://html.spec.whatwg.org/multipage/interaction.html#contenteditable
 WebIDL::ExceptionOr<void> HTMLElement::set_content_editable(DeprecatedString const& content_editable)
 {
-    if (content_editable.equals_ignoring_case("inherit"sv)) {
+    if (content_editable.equals_ignoring_ascii_case("inherit"sv)) {
         remove_attribute(HTML::AttributeNames::contenteditable);
         return {};
     }
-    if (content_editable.equals_ignoring_case("true"sv)) {
+    if (content_editable.equals_ignoring_ascii_case("true"sv)) {
         MUST(set_attribute(HTML::AttributeNames::contenteditable, "true"));
         return {};
     }
-    if (content_editable.equals_ignoring_case("false"sv)) {
+    if (content_editable.equals_ignoring_ascii_case("false"sv)) {
         MUST(set_attribute(HTML::AttributeNames::contenteditable, "false"));
         return {};
     }
@@ -278,7 +281,7 @@ bool HTMLElement::fire_a_synthetic_pointer_event(DeprecatedFlyString const& type
     // 1. Let event be the result of creating an event using PointerEvent.
     // 2. Initialize event's type attribute to e.
     // FIXME: Actually create a PointerEvent!
-    auto event = UIEvents::MouseEvent::create(realm(), type);
+    auto event = UIEvents::MouseEvent::create(realm(), type).release_value_but_fixme_should_propagate_errors();
 
     // 3. Initialize event's bubbles and cancelable attributes to true.
     event->set_bubbles(true);
@@ -300,7 +303,7 @@ bool HTMLElement::fire_a_synthetic_pointer_event(DeprecatedFlyString const& type
     // FIXME: 8. event's getModifierState() method is to return values appropriately describing the current state of the key input device.
 
     // 9. Return the result of dispatching event at target.
-    return target.dispatch_event(*event);
+    return target.dispatch_event(event);
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-click

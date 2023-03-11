@@ -11,7 +11,7 @@
 
 namespace WebView {
 
-WebContentClient::WebContentClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket, ViewImplementation& view)
+WebContentClient::WebContentClient(NonnullOwnPtr<Core::LocalSocket> socket, ViewImplementation& view)
     : IPC::ConnectionToServer<WebContentClientEndpoint, WebContentServerEndpoint>(*this, move(socket))
     , m_view(view)
 {
@@ -238,6 +238,11 @@ void WebContentClient::did_set_cookie(AK::URL const& url, Web::Cookie::ParsedCoo
 void WebContentClient::did_update_cookie(Web::Cookie::Cookie const& cookie)
 {
     m_view.notify_server_did_update_cookie({}, cookie);
+}
+
+void WebContentClient::did_close_browsing_context()
+{
+    m_view.notify_server_did_close_browsing_context({});
 }
 
 void WebContentClient::did_update_resource_count(i32 count_waiting)

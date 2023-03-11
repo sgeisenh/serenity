@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/DeprecatedString.h>
+#include <AK/Function.h>
 #include <AK/HashFunctions.h>
 #include <AK/HashMap.h>
 #include <AK/JsonValue.h>
@@ -21,7 +22,6 @@
 #include <AK/Vector.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
-#include <LibCore/Stream.h>
 #include <LibLocale/Locale.h>
 
 template<class T>
@@ -158,7 +158,7 @@ static constexpr Array<@type@, @size@> @name@@index@ { {)~~~");
 
         generator.append(R"~~~(
 
-static constexpr Array<Span<@type@ const>, @size@ + 1> @name@ { {
+static constexpr Array<ReadonlySpan<@type@>, @size@ + 1> @name@ { {
     {})~~~");
 
         constexpr size_t max_values_per_row = 10;
@@ -324,18 +324,18 @@ struct CanonicalLanguageID {
     Vector<size_t> variants {};
 };
 
-inline ErrorOr<NonnullOwnPtr<Core::Stream::BufferedFile>> open_file(StringView path, Core::Stream::OpenMode mode)
+inline ErrorOr<NonnullOwnPtr<Core::BufferedFile>> open_file(StringView path, Core::File::OpenMode mode)
 {
     if (path.is_empty())
         return Error::from_string_literal("Provided path is empty, please provide all command line options");
 
-    auto file = TRY(Core::Stream::File::open(path, mode));
-    return Core::Stream::BufferedFile::create(move(file));
+    auto file = TRY(Core::File::open(path, mode));
+    return Core::BufferedFile::create(move(file));
 }
 
 inline ErrorOr<JsonValue> read_json_file(StringView path)
 {
-    auto file = TRY(open_file(path, Core::Stream::OpenMode::Read));
+    auto file = TRY(open_file(path, Core::File::OpenMode::Read));
     auto buffer = TRY(file->read_until_eof());
 
     return JsonValue::from_string(buffer);
@@ -348,12 +348,8 @@ inline ErrorOr<Core::DirIterator> path_to_dir_iterator(DeprecatedString path, St
         lexical_path = lexical_path.append(subpath);
 
     Core::DirIterator iterator(lexical_path.string(), Core::DirIterator::SkipParentAndBaseDir);
-    if (iterator.has_error()) {
-        // FIXME: Make Core::DirIterator return a StringView for its error
-        //        string.
-        auto const* error_string_ptr = iterator.error_string();
-        return Error::from_string_view({ error_string_ptr, strlen(error_string_ptr) });
-    }
+    if (iterator.has_error())
+        return iterator.error();
 
     return iterator;
 }
@@ -361,12 +357,8 @@ inline ErrorOr<Core::DirIterator> path_to_dir_iterator(DeprecatedString path, St
 inline ErrorOr<DeprecatedString> next_path_from_dir_iterator(Core::DirIterator& iterator)
 {
     auto next_path = iterator.next_full_path();
-    if (iterator.has_error()) {
-        // FIXME: Make Core::DirIterator return a StringView for its error
-        //        string.
-        auto const* error_string_ptr = iterator.error_string();
-        return Error::from_string_view({ error_string_ptr, strlen(error_string_ptr) });
-    }
+    if (iterator.has_error())
+        return iterator.error();
 
     return next_path;
 }
@@ -475,7 +467,7 @@ Optional<@return_type@> @method_name@(StringView key)
 }
 
 template<typename IdentifierFormatter>
-void generate_value_to_string(SourceGenerator& generator, StringView method_name_format, StringView value_type, StringView value_name, IdentifierFormatter&& format_identifier, Span<DeprecatedString const> values)
+void generate_value_to_string(SourceGenerator& generator, StringView method_name_format, StringView value_type, StringView value_name, IdentifierFormatter&& format_identifier, ReadonlySpan<DeprecatedString> values)
 {
     generator.set("method_name", DeprecatedString::formatted(method_name_format, value_name));
     generator.set("value_type", value_type);
@@ -576,7 +568,7 @@ void generate_mapping(SourceGenerator& generator, LocalesType const& locales, St
     generator.set("name", name);
     generator.set("size", DeprecatedString::number(locales.size()));
     generator.append(R"~~~(
-static constexpr Array<Span<@type@ const>, @size@> @name@ { {
+static constexpr Array<ReadonlySpan<@type@>, @size@> @name@ { {
     )~~~");
 
     constexpr size_t max_values_per_row = 10;
@@ -606,7 +598,7 @@ void generate_available_values(SourceGenerator& generator, StringView name, Vect
     generator.set("name", name);
 
     generator.append(R"~~~(
-Span<StringView const> @name@()
+ReadonlySpan<StringView> @name@()
 {
     static constexpr auto values = Array {)~~~");
 

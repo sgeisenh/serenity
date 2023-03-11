@@ -11,11 +11,11 @@
 #include <AK/Platform.h>
 #include <AK/Time.h>
 #include <AK/Types.h>
+#include <AK/Vector.h>
 #include <Kernel/API/TimePage.h>
 #include <Kernel/Arch/RegisterState.h>
 #include <Kernel/Forward.h>
 #include <Kernel/Library/LockRefPtr.h>
-#include <Kernel/Library/NonnullLockRefPtrVector.h>
 #include <Kernel/UnixTypes.h>
 
 namespace Kernel {
@@ -52,6 +52,7 @@ public:
     void set_epoch_time(Time);
     time_t ticks_per_second() const;
     static Time boot_time();
+    Time clock_resolution() const;
 
     bool is_system_timer(HardwareTimerBase const&) const;
 
@@ -92,7 +93,7 @@ private:
 #endif
     Vector<HardwareTimerBase*> scan_and_initialize_periodic_timers();
     Vector<HardwareTimerBase*> scan_for_non_periodic_timers();
-    NonnullLockRefPtrVector<HardwareTimerBase> m_hardware_timers;
+    Vector<NonnullLockRefPtr<HardwareTimerBase>> m_hardware_timers;
     void set_system_timer(HardwareTimerBase&);
     static void system_timer_tick(RegisterState const&);
 

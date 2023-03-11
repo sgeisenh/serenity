@@ -33,7 +33,7 @@ namespace Web::WebDriver {
 
 #define TRY_OR_JS_ERROR(expression)                                                                  \
     ({                                                                                               \
-        auto _temporary_result = (expression);                                                       \
+        auto&& _temporary_result = (expression);                                                     \
         if (_temporary_result.is_error()) [[unlikely]]                                               \
             return ExecuteScriptResultType::JavaScriptError;                                         \
         static_assert(!::AK::Detail::IsLvalueReference<decltype(_temporary_result.release_value())>, \
@@ -311,6 +311,8 @@ ExecuteScriptResultSerialized execute_script(Web::Page& page, DeprecatedString c
 
 ExecuteScriptResultSerialized execute_async_script(Web::Page& page, DeprecatedString const& body, JS::MarkedVector<JS::Value> arguments, Optional<u64> const& timeout)
 {
+    auto* document = page.top_level_browsing_context().active_document();
+    auto& settings_object = document->relevant_settings_object();
     auto* window = page.top_level_browsing_context().active_window();
     auto& realm = window->realm();
     auto& vm = window->vm();
@@ -321,8 +323,14 @@ ExecuteScriptResultSerialized execute_async_script(Web::Page& page, DeprecatedSt
 
     // FIXME: 5 Run the following substeps in parallel:
     auto result = [&] {
+        // NOTE: We need to push an execution context in order to make create_resolving_functions() succeed.
+        vm.push_execution_context(settings_object.realm_execution_context());
+
         // 1. Let resolvingFunctions be CreateResolvingFunctions(promise).
         auto resolving_functions = promise->create_resolving_functions();
+
+        VERIFY(&settings_object.realm_execution_context() == &vm.running_execution_context());
+        vm.pop_execution_context();
 
         // 2. Append resolvingFunctions.[[Resolve]] to arguments.
         arguments.append(&resolving_functions.resolve);

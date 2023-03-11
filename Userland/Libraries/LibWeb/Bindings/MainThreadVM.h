@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <AK/NonnullRefPtrVector.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/JobCallback.h>
 #include <LibJS/Runtime/VM.h>
@@ -52,7 +51,7 @@ struct WebEngineCustomJobCallbackData final : public JS::JobCallback::CustomData
 
 HTML::Script* active_script();
 JS::VM& main_thread_vm();
-void queue_mutation_observer_microtask(DOM::Document&);
+void queue_mutation_observer_microtask(DOM::Document const&);
 NonnullOwnPtr<JS::ExecutionContext> create_a_new_javascript_realm(JS::VM&, Function<JS::Object*(JS::Realm&)> create_global_object, Function<JS::Object*(JS::Realm&)> create_global_this_value);
 
 }

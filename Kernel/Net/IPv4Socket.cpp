@@ -40,7 +40,7 @@ ErrorOr<NonnullOwnPtr<DoubleBuffer>> IPv4Socket::try_create_receive_buffer()
     return DoubleBuffer::try_create("IPv4Socket: Receive buffer"sv, 256 * KiB);
 }
 
-ErrorOr<NonnullLockRefPtr<Socket>> IPv4Socket::create(int type, int protocol)
+ErrorOr<NonnullRefPtr<Socket>> IPv4Socket::create(int type, int protocol)
 {
     auto receive_buffer = TRY(IPv4Socket::try_create_receive_buffer());
 
@@ -49,7 +49,7 @@ ErrorOr<NonnullLockRefPtr<Socket>> IPv4Socket::create(int type, int protocol)
     if (type == SOCK_DGRAM)
         return TRY(UDPSocket::try_create(protocol, move(receive_buffer)));
     if (type == SOCK_RAW) {
-        auto raw_socket = adopt_lock_ref_if_nonnull(new (nothrow) IPv4Socket(type, protocol, move(receive_buffer), {}));
+        auto raw_socket = adopt_ref_if_nonnull(new (nothrow) IPv4Socket(type, protocol, move(receive_buffer), {}));
         if (raw_socket)
             return raw_socket.release_nonnull();
         return ENOMEM;
@@ -403,7 +403,7 @@ ErrorOr<size_t> IPv4Socket::recvfrom(OpenFileDescription& description, UserOrKer
             nreceived = receive_packet_buffered(description, offset_buffer, offset_buffer_length, flags, user_addr, user_addr_length, packet_timestamp, blocking);
 
         if (nreceived.is_error())
-            total_nreceived = nreceived;
+            total_nreceived = move(nreceived);
         else
             total_nreceived.value() += nreceived.value();
     } while ((flags & MSG_WAITALL) && !total_nreceived.is_error() && total_nreceived.value() < buffer_length);

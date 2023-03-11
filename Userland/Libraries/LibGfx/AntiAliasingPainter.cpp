@@ -10,7 +10,6 @@
 #    pragma GCC optimize("O3")
 #endif
 
-#include "FillPathImplementation.h"
 #include <AK/Function.h>
 #include <AK/NumericLimits.h>
 #include <LibGfx/AntiAliasingPainter.h>
@@ -213,15 +212,12 @@ void AntiAliasingPainter::draw_line(FloatPoint actual_from, FloatPoint actual_to
 
 void AntiAliasingPainter::fill_path(Path const& path, Color color, Painter::WindingRule rule)
 {
-    Detail::fill_path<Detail::FillPathMode::AllowFloatingPoints>(
-        m_underlying_painter, path, [=](IntPoint) { return color; }, rule, m_transform.translation());
+    m_underlying_painter.antialiased_fill_path(path, color, rule, m_transform.translation());
 }
 
 void AntiAliasingPainter::fill_path(Path const& path, PaintStyle const& paint_style, Painter::WindingRule rule)
 {
-    paint_style.paint(enclosing_int_rect(path.bounding_box()), [&](PaintStyle::SamplerFunction sampler) {
-        Detail::fill_path<Detail::FillPathMode::AllowFloatingPoints>(m_underlying_painter, path, move(sampler), rule, m_transform.translation());
-    });
+    m_underlying_painter.antialiased_fill_path(path, paint_style, rule, m_transform.translation());
 }
 
 void AntiAliasingPainter::stroke_path(Path const& path, Color color, float thickness)
@@ -232,57 +228,57 @@ void AntiAliasingPainter::stroke_path(Path const& path, Color color, float thick
     Optional<FloatLine> first_line;
 
     for (auto& segment : path.segments()) {
-        switch (segment.type()) {
+        switch (segment->type()) {
         case Segment::Type::Invalid:
             VERIFY_NOT_REACHED();
         case Segment::Type::MoveTo:
-            cursor = segment.point();
+            cursor = segment->point();
             break;
         case Segment::Type::LineTo:
-            draw_line(cursor, segment.point(), color, thickness);
+            draw_line(cursor, segment->point(), color, thickness);
             if (thickness > 1) {
                 if (!first_line.has_value())
-                    first_line = FloatLine(cursor, segment.point());
+                    first_line = FloatLine(cursor, segment->point());
                 if (previous_was_line)
-                    stroke_segment_intersection(cursor, segment.point(), last_line, color, thickness);
+                    stroke_segment_intersection(cursor, segment->point(), last_line, color, thickness);
                 last_line.set_a(cursor);
-                last_line.set_b(segment.point());
+                last_line.set_b(segment->point());
             }
-            cursor = segment.point();
+            cursor = segment->point();
             break;
         case Segment::Type::QuadraticBezierCurveTo: {
-            auto through = static_cast<QuadraticBezierCurveSegment const&>(segment).through();
-            draw_quadratic_bezier_curve(through, cursor, segment.point(), color, thickness);
-            cursor = segment.point();
+            auto through = static_cast<QuadraticBezierCurveSegment const&>(*segment).through();
+            draw_quadratic_bezier_curve(through, cursor, segment->point(), color, thickness);
+            cursor = segment->point();
             break;
         }
         case Segment::Type::CubicBezierCurveTo: {
-            auto& curve = static_cast<CubicBezierCurveSegment const&>(segment);
+            auto& curve = static_cast<CubicBezierCurveSegment const&>(*segment);
             auto through_0 = curve.through_0();
             auto through_1 = curve.through_1();
-            draw_cubic_bezier_curve(through_0, through_1, cursor, segment.point(), color, thickness);
-            cursor = segment.point();
+            draw_cubic_bezier_curve(through_0, through_1, cursor, segment->point(), color, thickness);
+            cursor = segment->point();
             break;
         }
         case Segment::Type::EllipticalArcTo:
-            auto& arc = static_cast<EllipticalArcSegment const&>(segment);
-            draw_elliptical_arc(cursor, segment.point(), arc.center(), arc.radii(), arc.x_axis_rotation(), arc.theta_1(), arc.theta_delta(), color, thickness);
-            cursor = segment.point();
+            auto& arc = static_cast<EllipticalArcSegment const&>(*segment);
+            draw_elliptical_arc(cursor, segment->point(), arc.center(), arc.radii(), arc.x_axis_rotation(), arc.theta_1(), arc.theta_delta(), color, thickness);
+            cursor = segment->point();
             break;
         }
 
-        previous_was_line = segment.type() == Segment::Type::LineTo;
+        previous_was_line = segment->type() == Segment::Type::LineTo;
     }
 
     // Check if the figure was started and closed as line at the same position.
-    if (thickness > 1 && previous_was_line && path.segments().size() >= 2 && path.segments().first().point() == cursor
-        && (path.segments().first().type() == Segment::Type::LineTo
-            || (path.segments().first().type() == Segment::Type::MoveTo && path.segments()[1].type() == Segment::Type::LineTo))) {
+    if (thickness > 1 && previous_was_line && path.segments().size() >= 2 && path.segments().first()->point() == cursor
+        && (path.segments().first()->type() == Segment::Type::LineTo
+            || (path.segments().first()->type() == Segment::Type::MoveTo && path.segments()[1]->type() == Segment::Type::LineTo))) {
         stroke_segment_intersection(first_line.value().a(), first_line.value().b(), last_line, color, thickness);
     }
 }
 
-void AntiAliasingPainter::draw_elliptical_arc(FloatPoint p1, FloatPoint p2, FloatPoint center, FloatPoint radii, float x_axis_rotation, float theta_1, float theta_delta, Color color, float thickness, Painter::LineStyle style)
+void AntiAliasingPainter::draw_elliptical_arc(FloatPoint p1, FloatPoint p2, FloatPoint center, FloatSize radii, float x_axis_rotation, float theta_1, float theta_delta, Color color, float thickness, Painter::LineStyle style)
 {
     Painter::for_each_line_segment_on_elliptical_arc(p1, p2, center, radii, x_axis_rotation, theta_1, theta_delta, [&](FloatPoint fp1, FloatPoint fp2) {
         draw_line_for_path(fp1, fp2, color, thickness, style);
@@ -443,8 +439,8 @@ FLATTEN AntiAliasingPainter::Range AntiAliasingPainter::draw_ellipse_part(
     int f_squared = y * y;
 
     // 1st and 2nd order differences of f(i)*f(i)
-    int delta_f_squared = -(static_cast<int64_t>(b_squared) * subpixel_resolution * subpixel_resolution) / a_squared;
-    int delta2_f_squared = 2 * delta_f_squared;
+    int delta_f_squared = (static_cast<int64_t>(b_squared) * subpixel_resolution * subpixel_resolution) / a_squared;
+    int delta2_f_squared = -delta_f_squared - delta_f_squared;
 
     // edge_intersection_area/subpixel_resolution = percentage of pixel intersected by circle
     // (aka the alpha for the pixel)
@@ -486,11 +482,6 @@ FLATTEN AntiAliasingPainter::Range AntiAliasingPainter::draw_ellipse_part(
 
     auto correct = [&] {
         int error = y - y_hat;
-
-        // FIXME: The alpha values seem too low, which makes things look
-        // overly pointy. This fixes that, though there's probably a better
-        // solution to be found. (This issue seems to exist in the base algorithm)
-        error /= 4;
 
         delta2_y += error;
         delta_y += error;

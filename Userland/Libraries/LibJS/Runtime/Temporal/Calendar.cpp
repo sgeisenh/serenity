@@ -41,7 +41,7 @@ bool is_builtin_calendar(StringView identifier)
 
     // 2. If calendars contains the ASCII-lowercase of id, return true.
     for (auto calendar : calendars) {
-        if (calendar.equals_ignoring_case(identifier))
+        if (calendar.equals_ignoring_ascii_case(identifier))
             return true;
     }
 
@@ -50,7 +50,7 @@ bool is_builtin_calendar(StringView identifier)
 }
 
 // 12.1.2 AvailableCalendars ( ), https://tc39.es/proposal-temporal/#sec-temporal-availablecalendars
-Span<StringView const> available_calendars()
+ReadonlySpan<StringView> available_calendars()
 {
     // 1. Let calendars be the List of String values representing calendar types supported by the implementation.
     // NOTE: This can be removed in favor of using `Unicode::get_available_calendars()` once everything is updated to handle non-iso8601 calendars.
@@ -99,7 +99,7 @@ ThrowCompletionOr<Calendar*> get_builtin_calendar(VM& vm, String const& identifi
 Calendar* get_iso8601_calendar(VM& vm)
 {
     // 1. Return ! GetBuiltinCalendar("iso8601").
-    return MUST(get_builtin_calendar(vm, String::from_utf8("iso8601"sv).release_value_but_fixme_should_propagate_errors()));
+    return MUST(get_builtin_calendar(vm, "iso8601"_string.release_value_but_fixme_should_propagate_errors()));
 }
 
 // 12.2.4 CalendarFields ( calendar, fieldNames ), https://tc39.es/proposal-temporal/#sec-temporal-calendarfields
@@ -120,7 +120,10 @@ ThrowCompletionOr<Vector<String>> calendar_fields(VM& vm, Object& calendar, Vect
     }
 
     // 3. Let fieldsArray be ? Call(fields, calendar, « CreateArrayFromList(fieldNames) »).
-    auto fields_array = TRY(call(vm, *fields, &calendar, Array::create_from<StringView>(realm, field_names, [&](auto value) { return PrimitiveString::create(vm, value); })));
+    auto field_names_array = MUST_OR_THROW_OOM(Array::try_create_from<StringView>(vm, realm, field_names, [&](auto value) {
+        return PrimitiveString::create(vm, value);
+    }));
+    auto fields_array = TRY(call(vm, *fields, &calendar, field_names_array));
 
     // 4. Return ? IterableToListOfType(fieldsArray, « String »).
     auto list = TRY(iterable_to_list_of_type(vm, fields_array, { OptionType::String }));
@@ -149,7 +152,7 @@ ThrowCompletionOr<Object*> calendar_merge_fields(VM& vm, Object& calendar, Objec
 
     // 4. If Type(result) is not Object, throw a TypeError exception.
     if (!result.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, result.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, result.to_string_without_side_effects()));
 
     // 5. Return result.
     return &result.as_object();
@@ -821,10 +824,10 @@ ThrowCompletionOr<ISODateRecord> iso_date_from_fields(VM& vm, Object const& fiel
 
     // 2. Set fields to ? PrepareTemporalFields(fields, « "day", "month", "monthCode", "year" », « "year", "day" »).
     auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields,
-        { String::from_utf8_short_string("day"sv),
-            TRY_OR_THROW_OOM(vm, String::from_utf8("month"sv)),
-            TRY_OR_THROW_OOM(vm, String::from_utf8("monthCode"sv)),
-            TRY_OR_THROW_OOM(vm, String::from_utf8("year"sv)) },
+        { "day"_short_string,
+            TRY_OR_THROW_OOM(vm, "month"_string),
+            TRY_OR_THROW_OOM(vm, "monthCode"_string),
+            TRY_OR_THROW_OOM(vm, "year"_string) },
         Vector<StringView> { "year"sv, "day"sv }));
 
     // 3. Let overflow be ? ToTemporalOverflow(options).
@@ -856,9 +859,9 @@ ThrowCompletionOr<ISOYearMonth> iso_year_month_from_fields(VM& vm, Object const&
 
     // 2. Set fields to ? PrepareTemporalFields(fields, « "month", "monthCode", "year" », « "year" »).
     auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields,
-        { TRY_OR_THROW_OOM(vm, String::from_utf8("month"sv)),
-            TRY_OR_THROW_OOM(vm, String::from_utf8("monthCode"sv)),
-            TRY_OR_THROW_OOM(vm, String::from_utf8("year"sv)) },
+        { TRY_OR_THROW_OOM(vm, "month"_string),
+            TRY_OR_THROW_OOM(vm, "monthCode"_string),
+            TRY_OR_THROW_OOM(vm, "year"_string) },
         Vector<StringView> { "year"sv }));
 
     // 3. Let overflow be ? ToTemporalOverflow(options).
@@ -887,10 +890,10 @@ ThrowCompletionOr<ISOMonthDay> iso_month_day_from_fields(VM& vm, Object const& f
 
     // 2. Set fields to ? PrepareTemporalFields(fields, « "day", "month", "monthCode", "year" », « "day" »).
     auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields,
-        { String::from_utf8_short_string("day"sv),
-            TRY_OR_THROW_OOM(vm, String::from_utf8("month"sv)),
-            TRY_OR_THROW_OOM(vm, String::from_utf8("monthCode"sv)),
-            TRY_OR_THROW_OOM(vm, String::from_utf8("year"sv)) },
+        { "day"_short_string,
+            TRY_OR_THROW_OOM(vm, "month"_string),
+            TRY_OR_THROW_OOM(vm, "monthCode"_string),
+            TRY_OR_THROW_OOM(vm, "year"_string) },
         Vector<StringView> { "day"sv }));
 
     // 3. Let overflow be ? ToTemporalOverflow(options).

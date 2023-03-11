@@ -1,6 +1,7 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,8 +9,6 @@
 #pragma once
 
 #include <AK/Function.h>
-#include <AK/NonnullOwnPtrVector.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/Timer.h>
 #include <LibGUI/AbstractScrollableWidget.h>
@@ -121,17 +120,16 @@ public:
     size_t line_count() const { return document().line_count(); }
     TextDocumentLine& line(size_t index) { return document().line(index); }
     TextDocumentLine const& line(size_t index) const { return document().line(index); }
-    NonnullOwnPtrVector<TextDocumentLine>& lines() { return document().lines(); }
-    NonnullOwnPtrVector<TextDocumentLine> const& lines() const { return document().lines(); }
+    Vector<NonnullOwnPtr<TextDocumentLine>>& lines() { return document().lines(); }
+    Vector<NonnullOwnPtr<TextDocumentLine>> const& lines() const { return document().lines(); }
     int line_height() const;
     TextPosition cursor() const { return m_cursor; }
     TextRange normalized_selection() const { return m_selection.normalized(); }
 
     void insert_at_cursor_or_replace_selection(StringView);
     void replace_all_text_without_resetting_undo_stack(StringView text);
-    bool write_to_file(DeprecatedString const& path);
-    bool write_to_file(Core::File&);
-    ErrorOr<void> write_to_file(Core::Stream::File&);
+    ErrorOr<void> write_to_file(StringView path);
+    ErrorOr<void> write_to_file(Core::File&);
     bool has_selection() const { return m_selection.is_valid(); }
     DeprecatedString selected_text() const;
     size_t number_of_words() const;
@@ -190,6 +188,8 @@ public:
     void set_cursor_and_focus_line(size_t line, size_t column);
     void set_cursor(size_t line, size_t column);
     virtual void set_cursor(TextPosition const&);
+    void set_cursor_to_text_position(Gfx::IntPoint);
+    void set_cursor_to_end_of_visual_line();
 
     Syntax::Highlighter* syntax_highlighter();
     Syntax::Highlighter const* syntax_highlighter() const;
@@ -265,17 +265,21 @@ protected:
     virtual void resize_event(ResizeEvent&) override;
     virtual void theme_change_event(ThemeChangeEvent&) override;
     virtual void cursor_did_change();
-    Gfx::IntRect ruler_content_rect(size_t line) const;
     Gfx::IntRect gutter_content_rect(size_t line) const;
+    Gfx::IntRect ruler_content_rect(size_t line) const;
+    Gfx::IntRect folding_indicator_rect(size_t line) const;
 
     TextPosition text_position_at(Gfx::IntPoint) const;
     bool ruler_visible() const { return m_ruler_visible; }
     bool gutter_visible() const { return m_gutter_visible; }
     Gfx::IntRect content_rect_for_position(TextPosition const&) const;
-    int ruler_width() const;
     int gutter_width() const;
+    int ruler_width() const;
+    int folding_indicator_width() const;
+    int fixed_elements_width() const { return gutter_width() + ruler_width() + folding_indicator_width(); }
 
     virtual void highlighter_did_set_spans(Vector<TextDocumentSpan> spans) final { document().set_spans(Syntax::HighlighterClient::span_collection_index, move(spans)); }
+    virtual void highlighter_did_set_folding_regions(Vector<TextDocumentFoldingRegion> folding_regions) final;
 
 private:
     friend class TextDocumentLine;
@@ -294,6 +298,8 @@ private:
     virtual Vector<TextDocumentSpan>& spans() final { return document().spans(); }
     virtual Vector<TextDocumentSpan> const& spans() const final { return document().spans(); }
     virtual void set_span_at_index(size_t index, TextDocumentSpan span) final { document().set_span_at_index(index, move(span)); }
+    virtual Vector<GUI::TextDocumentFoldingRegion>& folding_regions() final { return document().folding_regions(); };
+    virtual Vector<GUI::TextDocumentFoldingRegion> const& folding_regions() const final { return document().folding_regions(); };
     virtual void highlighter_did_request_update() final { update(); }
     virtual DeprecatedString highlighter_did_request_text() const final { return text(); }
     virtual GUI::TextDocument& highlighter_did_request_document() final { return document(); }
@@ -347,15 +353,16 @@ private:
     Gfx::IntRect line_widget_rect(size_t line_index) const;
     void delete_selection();
     int content_x_for_position(TextPosition const&) const;
-    Gfx::IntRect ruler_rect_in_inner_coordinates() const;
     Gfx::IntRect gutter_rect_in_inner_coordinates() const;
+    Gfx::IntRect ruler_rect_in_inner_coordinates() const;
+    Gfx::IntRect folding_indicator_rect_in_inner_coordinates() const;
     Gfx::IntRect visible_text_rect_in_inner_coordinates() const;
     void recompute_all_visual_lines();
     void ensure_cursor_is_valid();
     void rehighlight_if_needed();
 
     size_t visual_line_containing(size_t line_index, size_t column) const;
-    void recompute_visual_lines(size_t line_index);
+    void recompute_visual_lines(size_t line_index, Vector<TextDocumentFoldingRegion const&>::Iterator& folded_region_iterator);
 
     template<class T, class... Args>
     inline void execute(Args&&... args)
@@ -405,7 +412,7 @@ private:
     RefPtr<Action> m_select_all_action;
     RefPtr<Action> m_insert_emoji_action;
     Core::ElapsedTimer m_triple_click_timer;
-    NonnullRefPtrVector<Action> m_custom_context_menu_actions;
+    Vector<NonnullRefPtr<Action>> m_custom_context_menu_actions;
 
     size_t m_reflow_deferred { 0 };
     bool m_reflow_requested { false };
@@ -420,11 +427,11 @@ private:
     void for_each_visual_line(size_t line_index, Callback) const;
 
     struct LineVisualData {
-        Vector<size_t, 1> visual_line_breaks;
+        Vector<Utf32View> visual_lines;
         Gfx::IntRect visual_rect;
     };
 
-    NonnullOwnPtrVector<LineVisualData> m_line_visual_data;
+    Vector<NonnullOwnPtr<LineVisualData>> m_line_visual_data;
 
     OwnPtr<Syntax::Highlighter> m_highlighter;
     OwnPtr<AutocompleteProvider> m_autocomplete_provider;
@@ -437,7 +444,7 @@ private:
 
     Gfx::IntPoint m_last_mousemove_position;
 
-    RefPtr<Gfx::Bitmap> m_icon;
+    RefPtr<Gfx::Bitmap const> m_icon;
 
     bool m_text_is_secret { false };
 

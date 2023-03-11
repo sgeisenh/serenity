@@ -14,6 +14,7 @@
 #include <Kernel/FileSystem/Custody.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
+#include <Kernel/KBufferBuilder.h>
 #include <Kernel/KLexicalPath.h>
 #include <Kernel/Locking/Spinlock.h>
 #include <Kernel/Memory/ScopedAddressSpaceSwitcher.h>
@@ -73,7 +74,7 @@ ErrorOr<NonnullOwnPtr<Coredump>> Coredump::try_create(NonnullLockRefPtr<Process>
     return adopt_nonnull_own_or_enomem(new (nothrow) Coredump(move(process), move(description), move(regions)));
 }
 
-Coredump::Coredump(NonnullLockRefPtr<Process> process, NonnullLockRefPtr<OpenFileDescription> description, Vector<FlatRegionData> regions)
+Coredump::Coredump(NonnullLockRefPtr<Process> process, NonnullRefPtr<OpenFileDescription> description, Vector<FlatRegionData> regions)
     : m_process(move(process))
     , m_description(move(description))
     , m_regions(move(regions))
@@ -92,7 +93,7 @@ Coredump::Coredump(NonnullLockRefPtr<Process> process, NonnullLockRefPtr<OpenFil
     ++m_num_program_headers; // +1 for NOTE segment
 }
 
-ErrorOr<NonnullLockRefPtr<OpenFileDescription>> Coredump::try_create_target_file(Process const& process, StringView output_path)
+ErrorOr<NonnullRefPtr<OpenFileDescription>> Coredump::try_create_target_file(Process const& process, StringView output_path)
 {
     auto output_directory = KLexicalPath::dirname(output_path);
     auto dump_directory = TRY(VirtualFileSystem::the().open_directory(Process::current().credentials(), output_directory, VirtualFileSystem::the().root_custody()));
@@ -228,11 +229,15 @@ ErrorOr<void> Coredump::write_regions()
         TRY(m_process->address_space().with([&](auto& space) -> ErrorOr<void> {
             auto* real_region = space->region_tree().regions().find(region.vaddr().get());
 
-            if (!real_region)
-                return Error::from_string_view("Failed to find matching region in the process"sv);
+            if (!real_region) {
+                dmesgln("Coredump::write_regions: Failed to find matching region in the process");
+                return Error::from_errno(EFAULT);
+            }
 
-            if (!region.is_consistent_with_region(*real_region))
-                return Error::from_string_view("Found region does not match stored metadata"sv);
+            if (!region.is_consistent_with_region(*real_region)) {
+                dmesgln("Coredump::write_regions: Found region does not match stored metadata");
+                return Error::from_errno(EINVAL);
+            }
 
             // If we crashed in the middle of mapping in Regions, they do not have a page directory yet, and will crash on a remap() call
             if (!real_region->is_mapped())
@@ -282,14 +287,14 @@ ErrorOr<void> Coredump::create_notes_process_data(auto& builder) const
         {
             auto arguments_array = TRY(process_obj.add_array("arguments"sv));
             for (auto const& argument : m_process->arguments())
-                TRY(arguments_array.add(argument.view()));
+                TRY(arguments_array.add(argument->view()));
             TRY(arguments_array.finish());
         }
 
         {
             auto environment_array = TRY(process_obj.add_array("environment"sv));
             for (auto const& variable : m_process->environment())
-                TRY(environment_array.add(variable.view()));
+                TRY(environment_array.add(variable->view()));
             TRY(environment_array.finish());
         }
 
@@ -305,10 +310,10 @@ ErrorOr<void> Coredump::create_notes_threads_data(auto& builder) const
     for (auto const& thread : m_process->threads_for_coredump({})) {
         ELF::Core::ThreadInfo info {};
         info.header.type = ELF::Core::NotesEntryHeader::Type::ThreadInfo;
-        info.tid = thread.tid().value();
+        info.tid = thread->tid().value();
 
-        if (thread.current_trap())
-            copy_kernel_registers_into_ptrace_registers(info.regs, thread.get_register_dump_from_stack());
+        if (thread->current_trap())
+            copy_kernel_registers_into_ptrace_registers(info.regs, thread->get_register_dump_from_stack());
 
         TRY(builder.append_bytes(ReadonlyBytes { &info, sizeof(info) }));
     }

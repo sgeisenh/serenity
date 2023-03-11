@@ -1,12 +1,13 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/DeprecatedFlyString.h>
+#include <AK/String.h>
 #include <AK/StringBuilder.h>
+#include <AK/URLParser.h>
 #include <LibJS/Heap/MarkedVector.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/PropertyDescriptor.h>
@@ -50,7 +51,7 @@ JS::ThrowCompletionOr<void> Location::initialize(JS::Realm& realm)
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#relevant-document
-DOM::Document const* Location::relevant_document() const
+JS::GCPtr<DOM::Document> Location::relevant_document() const
 {
     // A Location object has an associated relevant Document, which is this Location object's
     // relevant global object's browsing context's active document, if this Location object's
@@ -64,31 +65,39 @@ AK::URL Location::url() const
 {
     // A Location object has an associated url, which is this Location object's relevant Document's URL,
     // if this Location object's relevant Document is non-null, and about:blank otherwise.
-    auto const* relevant_document = this->relevant_document();
+    auto const relevant_document = this->relevant_document();
     return relevant_document ? relevant_document->url() : "about:blank"sv;
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-location-href
-DeprecatedString Location::href() const
+WebIDL::ExceptionOr<String> Location::href() const
 {
-    // FIXME: 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto& vm = this->vm();
+
+    // 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto const relevant_document = this->relevant_document();
+    if (relevant_document && !relevant_document->origin().is_same_origin_domain(entry_settings_object().origin()))
+        return WebIDL::SecurityError::create(realm(), "Location's relevant document is not same origin-domain with the entry settings object's origin"sv);
 
     // 2. Return this's url, serialized.
-    return url().to_deprecated_string();
+    return TRY_OR_THROW_OOM(vm, String::from_deprecated_string(url().serialize()));
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#the-location-interface:dom-location-href-2
-JS::ThrowCompletionOr<void> Location::set_href(DeprecatedString const& new_href)
+WebIDL::ExceptionOr<void> Location::set_href(String const& new_href)
 {
     auto& vm = this->vm();
     auto& window = verify_cast<HTML::Window>(HTML::current_global_object());
 
-    // FIXME: 1. If this's relevant Document is null, then return.
+    // 1. If this's relevant Document is null, then return.
+    auto const relevant_document = this->relevant_document();
+    if (!relevant_document)
+        return {};
 
     // 2. Parse the given value relative to the entry settings object. If that failed, throw a TypeError exception.
-    auto href_url = window.associated_document().parse_url(new_href);
+    auto href_url = window.associated_document().parse_url(new_href.to_deprecated_string());
     if (!href_url.is_valid())
-        return vm.throw_completion<JS::URIError>(DeprecatedString::formatted("Invalid URL '{}'", new_href));
+        return vm.throw_completion<JS::URIError>(TRY_OR_THROW_OOM(vm, String::formatted("Invalid URL '{}'", new_href)));
 
     // 3. Location-object navigate given the resulting URL record.
     window.did_set_location_href({}, href_url);
@@ -97,152 +106,223 @@ JS::ThrowCompletionOr<void> Location::set_href(DeprecatedString const& new_href)
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-location-origin
-DeprecatedString Location::origin() const
+WebIDL::ExceptionOr<String> Location::origin() const
 {
-    // FIXME: 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto& vm = this->vm();
+
+    // 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto const relevant_document = this->relevant_document();
+    if (relevant_document && !relevant_document->origin().is_same_origin_domain(entry_settings_object().origin()))
+        return WebIDL::SecurityError::create(realm(), "Location's relevant document is not same origin-domain with the entry settings object's origin"sv);
 
     // 2. Return the serialization of this's url's origin.
-    return url().serialize_origin();
+    return TRY_OR_THROW_OOM(vm, String::from_deprecated_string(url().serialize_origin()));
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-location-protocol
-DeprecatedString Location::protocol() const
+WebIDL::ExceptionOr<String> Location::protocol() const
 {
-    // FIXME: 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto& vm = this->vm();
+
+    // 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto const relevant_document = this->relevant_document();
+    if (relevant_document && !relevant_document->origin().is_same_origin_domain(entry_settings_object().origin()))
+        return WebIDL::SecurityError::create(realm(), "Location's relevant document is not same origin-domain with the entry settings object's origin"sv);
 
     // 2. Return this's url's scheme, followed by ":".
-    return DeprecatedString::formatted("{}:", url().scheme());
+    return TRY_OR_THROW_OOM(vm, String::formatted("{}:", url().scheme()));
 }
 
-JS::ThrowCompletionOr<void> Location::set_protocol(DeprecatedString const&)
+WebIDL::ExceptionOr<void> Location::set_protocol(String const&)
 {
     auto& vm = this->vm();
     return vm.throw_completion<JS::InternalError>(JS::ErrorType::NotImplemented, "Location.protocol setter");
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-location-host
-DeprecatedString Location::host() const
+WebIDL::ExceptionOr<String> Location::host() const
 {
-    // FIXME: 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto& vm = this->vm();
+
+    // 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto const relevant_document = this->relevant_document();
+    if (relevant_document && !relevant_document->origin().is_same_origin_domain(entry_settings_object().origin()))
+        return WebIDL::SecurityError::create(realm(), "Location's relevant document is not same origin-domain with the entry settings object's origin"sv);
 
     // 2. Let url be this's url.
     auto url = this->url();
 
     // 3. If url's host is null, return the empty string.
     if (url.host().is_null())
-        return DeprecatedString::empty();
+        return String {};
 
     // 4. If url's port is null, return url's host, serialized.
     if (!url.port().has_value())
-        return url.host();
+        return TRY_OR_THROW_OOM(vm, String::from_deprecated_string(url.host()));
 
     // 5. Return url's host, serialized, followed by ":" and url's port, serialized.
-    return DeprecatedString::formatted("{}:{}", url.host(), *url.port());
+    return TRY_OR_THROW_OOM(vm, String::formatted("{}:{}", url.host(), *url.port()));
 }
 
-JS::ThrowCompletionOr<void> Location::set_host(DeprecatedString const&)
+WebIDL::ExceptionOr<void> Location::set_host(String const&)
 {
     auto& vm = this->vm();
     return vm.throw_completion<JS::InternalError>(JS::ErrorType::NotImplemented, "Location.host setter");
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-location-hostname
-DeprecatedString Location::hostname() const
+WebIDL::ExceptionOr<String> Location::hostname() const
 {
-    // FIXME: 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto& vm = this->vm();
+
+    // 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto const relevant_document = this->relevant_document();
+    if (relevant_document && !relevant_document->origin().is_same_origin_domain(entry_settings_object().origin()))
+        return WebIDL::SecurityError::create(realm(), "Location's relevant document is not same origin-domain with the entry settings object's origin"sv);
 
     auto url = this->url();
 
     // 2. If this's url's host is null, return the empty string.
     if (url.host().is_null())
-        return DeprecatedString::empty();
+        return String {};
 
     // 3. Return this's url's host, serialized.
-    return url.host();
+    return TRY_OR_THROW_OOM(vm, String::from_deprecated_string(url.host()));
 }
 
-JS::ThrowCompletionOr<void> Location::set_hostname(DeprecatedString const&)
+WebIDL::ExceptionOr<void> Location::set_hostname(String const&)
 {
     auto& vm = this->vm();
     return vm.throw_completion<JS::InternalError>(JS::ErrorType::NotImplemented, "Location.hostname setter");
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-location-port
-DeprecatedString Location::port() const
+WebIDL::ExceptionOr<String> Location::port() const
 {
-    // FIXME: 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto& vm = this->vm();
+
+    // 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto const relevant_document = this->relevant_document();
+    if (relevant_document && !relevant_document->origin().is_same_origin_domain(entry_settings_object().origin()))
+        return WebIDL::SecurityError::create(realm(), "Location's relevant document is not same origin-domain with the entry settings object's origin"sv);
 
     auto url = this->url();
 
     // 2. If this's url's port is null, return the empty string.
     if (!url.port().has_value())
-        return DeprecatedString::empty();
+        return String {};
 
     // 3. Return this's url's port, serialized.
-    return DeprecatedString::number(*url.port());
+    return TRY_OR_THROW_OOM(vm, String::number(*url.port()));
 }
 
-JS::ThrowCompletionOr<void> Location::set_port(DeprecatedString const&)
+WebIDL::ExceptionOr<void> Location::set_port(String const&)
 {
     auto& vm = this->vm();
     return vm.throw_completion<JS::InternalError>(JS::ErrorType::NotImplemented, "Location.port setter");
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-location-pathname
-DeprecatedString Location::pathname() const
+WebIDL::ExceptionOr<String> Location::pathname() const
 {
-    // FIXME: 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto& vm = this->vm();
+
+    // 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto const relevant_document = this->relevant_document();
+    if (relevant_document && !relevant_document->origin().is_same_origin_domain(entry_settings_object().origin()))
+        return WebIDL::SecurityError::create(realm(), "Location's relevant document is not same origin-domain with the entry settings object's origin"sv);
 
     // 2. Return the result of URL path serializing this Location object's url.
-    return url().path();
+    return TRY_OR_THROW_OOM(vm, String::from_deprecated_string(url().path()));
 }
 
-JS::ThrowCompletionOr<void> Location::set_pathname(DeprecatedString const&)
+WebIDL::ExceptionOr<void> Location::set_pathname(String const&)
 {
     auto& vm = this->vm();
     return vm.throw_completion<JS::InternalError>(JS::ErrorType::NotImplemented, "Location.pathname setter");
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-location-search
-DeprecatedString Location::search() const
+WebIDL::ExceptionOr<String> Location::search() const
 {
-    // FIXME: 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto& vm = this->vm();
+
+    // 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto const relevant_document = this->relevant_document();
+    if (relevant_document && !relevant_document->origin().is_same_origin_domain(entry_settings_object().origin()))
+        return WebIDL::SecurityError::create(realm(), "Location's relevant document is not same origin-domain with the entry settings object's origin"sv);
 
     auto url = this->url();
 
     // 2. If this's url's query is either null or the empty string, return the empty string.
     if (url.query().is_empty())
-        return DeprecatedString::empty();
+        return String {};
 
     // 3. Return "?", followed by this's url's query.
-    return DeprecatedString::formatted("?{}", url.query());
+    return TRY_OR_THROW_OOM(vm, String::formatted("?{}", url.query()));
 }
 
-JS::ThrowCompletionOr<void> Location::set_search(DeprecatedString const&)
+WebIDL::ExceptionOr<void> Location::set_search(String const&)
 {
     auto& vm = this->vm();
     return vm.throw_completion<JS::InternalError>(JS::ErrorType::NotImplemented, "Location.search setter");
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-location-hash
-DeprecatedString Location::hash() const
+WebIDL::ExceptionOr<String> Location::hash() const
 {
-    // FIXME: 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto& vm = this->vm();
+
+    // 1. If this's relevant Document is non-null and its origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    auto const relevant_document = this->relevant_document();
+    if (relevant_document && !relevant_document->origin().is_same_origin_domain(entry_settings_object().origin()))
+        return WebIDL::SecurityError::create(realm(), "Location's relevant document is not same origin-domain with the entry settings object's origin"sv);
 
     auto url = this->url();
 
     // 2. If this's url's fragment is either null or the empty string, return the empty string.
     if (url.fragment().is_empty())
-        return DeprecatedString::empty();
+        return String {};
 
     // 3. Return "#", followed by this's url's fragment.
-    return DeprecatedString::formatted("#{}", url.fragment());
+    return TRY_OR_THROW_OOM(vm, String::formatted("#{}", url.fragment()));
 }
 
-JS::ThrowCompletionOr<void> Location::set_hash(DeprecatedString const&)
+// https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-location-hash
+WebIDL::ExceptionOr<void> Location::set_hash(String const& value)
 {
-    auto& vm = this->vm();
-    return vm.throw_completion<JS::InternalError>(JS::ErrorType::NotImplemented, "Location.hash setter");
+    // The hash setter steps are:
+    auto const relevant_document = this->relevant_document();
+
+    // 1. If this's relevant Document is null, then return.
+    if (!relevant_document)
+        return {};
+
+    // 2. If this's relevant Document's origin is not same origin-domain with the entry settings object's origin, then throw a "SecurityError" DOMException.
+    if (!relevant_document->origin().is_same_origin_domain(entry_settings_object().origin()))
+        return WebIDL::SecurityError::create(realm(), "Location's relevant document is not same origin-domain with the entry settings object's origin"sv);
+
+    // 3. Let copyURL be a copy of this's url.
+    auto copy_url = this->url();
+
+    // 4. Let input be the given value with a single leading "#" removed, if any.
+    auto input = value.bytes_as_string_view().trim("#"sv, TrimMode::Left);
+
+    // 5. Set copyURL's fragment to the empty string.
+    copy_url.set_fragment("");
+
+    // 6. Basic URL parse input, with copyURL as url and fragment state as state override.
+    auto result_url = URLParser::parse(input, nullptr, copy_url, URLParser::State::Fragment);
+
+    // 7. If copyURL's fragment is this's url's fragment, then return.
+    if (copy_url.fragment() == this->url().fragment())
+        return {};
+
+    // 8. Location-object navigate this to copyURL.
+    auto& window = verify_cast<HTML::Window>(HTML::current_global_object());
+    window.did_set_location_href({}, copy_url);
+
+    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-location-reload
@@ -253,11 +333,11 @@ void Location::reload() const
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-location-replace
-void Location::replace(DeprecatedString url) const
+void Location::replace(String const& url) const
 {
     auto& window = verify_cast<HTML::Window>(HTML::current_global_object());
     // FIXME: This needs spec compliance work.
-    window.did_call_location_replace({}, move(url));
+    window.did_call_location_replace({}, url.to_deprecated_string());
 }
 
 // 7.10.5.1 [[GetPrototypeOf]] ( ), https://html.spec.whatwg.org/multipage/history.html#location-getprototypeof

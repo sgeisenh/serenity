@@ -8,6 +8,7 @@
 
 #include "Forward.h"
 #include "RegexOptions.h"
+#include <AK/Error.h>
 
 #include <AK/DeprecatedFlyString.h>
 #include <AK/DeprecatedString.h>
@@ -159,6 +160,11 @@ public:
 
     RegexStringView(DeprecatedString const& string)
         : m_view(string.view())
+    {
+    }
+
+    RegexStringView(String const& string)
+        : m_view(string.bytes_as_string_view())
     {
     }
 
@@ -394,6 +400,19 @@ public:
             });
     }
 
+    ErrorOr<String> to_string() const
+    {
+        return m_view.visit(
+            [](StringView view) { return String::from_utf8(view); },
+            [](Utf16View view) { return view.to_utf8(Utf16View::AllowInvalidCodeUnits::Yes); },
+            [](auto& view) -> ErrorOr<String> {
+                StringBuilder builder;
+                for (auto it = view.begin(); it != view.end(); ++it)
+                    TRY(builder.try_append_code_point(*it));
+                return builder.to_string();
+            });
+    }
+
     // Note: index must always be the code unit offset to return.
     u32 operator[](size_t index) const
     {
@@ -498,7 +517,7 @@ public:
         return m_view.visit(
             [&](StringView view) {
                 return other.m_view.visit(
-                    [&](StringView other_view) { return view.equals_ignoring_case(other_view); },
+                    [&](StringView other_view) { return view.equals_ignoring_ascii_case(other_view); },
                     [](auto&) -> bool { TODO(); });
             },
             [&](Utf16View view) {

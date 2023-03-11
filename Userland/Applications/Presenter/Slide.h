@@ -10,7 +10,6 @@
 #include "SlideObject.h"
 #include <AK/DeprecatedString.h>
 #include <AK/Forward.h>
-#include <AK/NonnullRefPtrVector.h>
 
 // A single slide of a presentation.
 class Slide final {
@@ -24,8 +23,8 @@ public:
     ErrorOr<HTMLElement> render(Presentation const&) const;
 
 private:
-    Slide(NonnullRefPtrVector<SlideObject> slide_objects, DeprecatedString title);
+    Slide(Vector<NonnullRefPtr<SlideObject>> slide_objects, DeprecatedString title);
 
-    NonnullRefPtrVector<SlideObject> m_slide_objects;
+    Vector<NonnullRefPtr<SlideObject>> m_slide_objects;
     DeprecatedString m_title;
 };

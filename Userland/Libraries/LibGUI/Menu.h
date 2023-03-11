@@ -1,12 +1,11 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/WeakPtr.h>
 #include <LibCore/Object.h>
 #include <LibGUI/Action.h>
@@ -48,6 +47,8 @@ public:
     Menu& add_submenu(DeprecatedString name);
     void remove_all_actions();
 
+    ErrorOr<void> add_recent_files_list(Function<void(Action&)>);
+
     void popup(Gfx::IntPoint screen_position, RefPtr<Action> const& default_action = nullptr, Gfx::IntRect const& button_rect = {});
     void dismiss();
 
@@ -59,7 +60,7 @@ public:
 
     bool is_visible() const { return m_visible; }
 
-    NonnullOwnPtrVector<MenuItem> const& items() const { return m_items; }
+    Vector<NonnullOwnPtr<MenuItem>> const& items() const { return m_items; }
 
 private:
     friend class Menubar;
@@ -74,10 +75,12 @@ private:
 
     int m_menu_id { -1 };
     DeprecatedString m_name;
-    RefPtr<Gfx::Bitmap> m_icon;
-    NonnullOwnPtrVector<MenuItem> m_items;
+    RefPtr<Gfx::Bitmap const> m_icon;
+    Vector<NonnullOwnPtr<MenuItem>> m_items;
     WeakPtr<Action> m_current_default_action;
     bool m_visible { false };
+
+    Function<void(Action&)> m_recent_files_callback;
 };
 
 }

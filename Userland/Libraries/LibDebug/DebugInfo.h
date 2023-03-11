@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
@@ -75,7 +74,7 @@ public:
 
         Dwarf::EntryTag type_tag;
         OwnPtr<VariableInfo> type;
-        NonnullOwnPtrVector<VariableInfo> members;
+        Vector<NonnullOwnPtr<VariableInfo>> members;
         VariableInfo* parent { nullptr };
         Vector<u32> dimension_sizes;
 
@@ -90,7 +89,7 @@ public:
         Vector<Dwarf::DIE> dies_of_variables;
     };
 
-    ErrorOr<NonnullOwnPtrVector<VariableInfo>> get_variables_in_current_scope(PtraceRegisters const&) const;
+    ErrorOr<Vector<NonnullOwnPtr<VariableInfo>>> get_variables_in_current_scope(PtraceRegisters const&) const;
 
     Optional<SourcePosition> get_source_position(FlatPtr address) const;
 

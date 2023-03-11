@@ -10,7 +10,6 @@
 #include <AK/Error.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <AK/RefPtr.h>
 #include <Kernel/FileSystem/FileBackedFileSystem.h>
@@ -60,8 +59,10 @@ public:
     ErrorOr<void> remount(Custody& mount_point, int new_flags);
     ErrorOr<void> unmount(Custody& mount_point);
 
-    ErrorOr<NonnullLockRefPtr<OpenFileDescription>> open(Credentials const&, StringView path, int options, mode_t mode, Custody& base, Optional<UidAndGid> = {});
-    ErrorOr<NonnullLockRefPtr<OpenFileDescription>> create(Credentials const&, StringView path, int options, mode_t mode, Custody& parent_custody, Optional<UidAndGid> = {});
+    ErrorOr<NonnullRefPtr<OpenFileDescription>> open(Credentials const&, StringView path, int options, mode_t mode, Custody& base, Optional<UidAndGid> = {});
+    ErrorOr<NonnullRefPtr<OpenFileDescription>> open(Process const&, Credentials const&, StringView path, int options, mode_t mode, Custody& base, Optional<UidAndGid> = {});
+    ErrorOr<NonnullRefPtr<OpenFileDescription>> create(Credentials const&, StringView path, int options, mode_t mode, Custody& parent_custody, Optional<UidAndGid> = {});
+    ErrorOr<NonnullRefPtr<OpenFileDescription>> create(Process const&, Credentials const&, StringView path, int options, mode_t mode, Custody& parent_custody, Optional<UidAndGid> = {});
     ErrorOr<void> mkdir(Credentials const&, StringView path, mode_t mode, Custody& base);
     ErrorOr<void> link(Credentials const&, StringView old_path, StringView new_path, Custody& base);
     ErrorOr<void> unlink(Credentials const&, StringView path, Custody& base);
@@ -92,12 +93,15 @@ public:
 
     NonnullRefPtr<Custody> root_custody();
     ErrorOr<NonnullRefPtr<Custody>> resolve_path(Credentials const&, StringView path, NonnullRefPtr<Custody> base, RefPtr<Custody>* out_parent = nullptr, int options = 0, int symlink_recursion_level = 0);
+    ErrorOr<NonnullRefPtr<Custody>> resolve_path(Process const&, Credentials const&, StringView path, NonnullRefPtr<Custody> base, RefPtr<Custody>* out_parent = nullptr, int options = 0, int symlink_recursion_level = 0);
     ErrorOr<NonnullRefPtr<Custody>> resolve_path_without_veil(Credentials const&, StringView path, NonnullRefPtr<Custody> base, RefPtr<Custody>* out_parent = nullptr, int options = 0, int symlink_recursion_level = 0);
 
 private:
     friend class OpenFileDescription;
 
-    UnveilNode const& find_matching_unveiled_path(StringView path);
+    UnveilNode const& find_matching_unveiled_path(Process const&, StringView path);
+    ErrorOr<void> validate_path_against_process_veil(Process const&, StringView path, int options);
+    ErrorOr<void> validate_path_against_process_veil(Process const& process, Custody const& custody, int options);
     ErrorOr<void> validate_path_against_process_veil(Custody const& path, int options);
     ErrorOr<void> validate_path_against_process_veil(StringView path, int options);
 
@@ -111,7 +115,7 @@ private:
     Mount* find_mount_for_host(InodeIdentifier);
     Mount* find_mount_for_guest(InodeIdentifier);
 
-    LockRefPtr<Inode> m_root_inode;
+    RefPtr<Inode> m_root_inode;
 
     SpinlockProtected<RefPtr<Custody>, LockRank::None> m_root_custody {};
 

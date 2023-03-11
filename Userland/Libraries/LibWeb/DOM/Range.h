@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
  * Copyright (c) 2022, Luke Wilde <lukew@serenityos.org>
- * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -26,10 +26,10 @@ class Range final : public AbstractRange {
     WEB_PLATFORM_OBJECT(Range, AbstractRange);
 
 public:
-    static JS::NonnullGCPtr<Range> create(Document&);
-    static JS::NonnullGCPtr<Range> create(HTML::Window&);
-    static JS::NonnullGCPtr<Range> create(Node& start_container, u32 start_offset, Node& end_container, u32 end_offset);
-    static JS::NonnullGCPtr<Range> construct_impl(JS::Realm&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> create(Document&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> create(HTML::Window&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> create(Node& start_container, u32 start_offset, Node& end_container, u32 end_offset);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> construct_impl(JS::Realm&);
 
     virtual ~Range() override;
 
@@ -43,7 +43,7 @@ public:
     WebIDL::ExceptionOr<void> set_end_after(Node& node);
     WebIDL::ExceptionOr<void> select_node(Node& node);
     void collapse(bool to_start);
-    WebIDL::ExceptionOr<void> select_node_contents(Node const&);
+    WebIDL::ExceptionOr<void> select_node_contents(Node&);
 
     // https://dom.spec.whatwg.org/#dom-range-start_to_start
     enum HowToCompareBoundaryPoints : u16 {
@@ -88,6 +88,8 @@ public:
     bool contains_node(Node const&) const;
 
     void set_associated_selection(Badge<Selection::Selection>, JS::GCPtr<Selection::Selection>);
+
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> create_contextual_fragment(DeprecatedString const& fragment);
 
 private:
     explicit Range(Document&);

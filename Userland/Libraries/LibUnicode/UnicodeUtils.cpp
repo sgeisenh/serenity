@@ -9,6 +9,7 @@
 #include <AK/StringBuilder.h>
 #include <AK/Types.h>
 #include <LibUnicode/CharacterTypes.h>
+#include <LibUnicode/Segmentation.h>
 #include <LibUnicode/UnicodeUtils.h>
 
 #if ENABLE_UNICODE_DATA
@@ -273,10 +274,6 @@ ErrorOr<void> build_titlecase_string([[maybe_unused]] Utf8View code_points, [[ma
     // the word boundary. If F exists, map F to Titlecase_Mapping(F); then map all characters C between
     // F and the following word boundary to Lowercase_Mapping(C).
 
-    auto boundaries = find_word_segmentation_boundaries(code_points);
-    if (boundaries.is_empty())
-        return {};
-
     auto first_cased_code_point_after_boundary = [&](auto boundary, auto next_boundary) -> Optional<Utf8CodePointIterator> {
         auto it = code_points.iterator_at_byte_offset_without_validation(boundary);
         auto end = code_points.iterator_at_byte_offset_without_validation(next_boundary);
@@ -301,11 +298,14 @@ ErrorOr<void> build_titlecase_string([[maybe_unused]] Utf8View code_points, [[ma
         return {};
     };
 
-    for (size_t i = 0; i < boundaries.size() - 1; ++i) {
-        auto boundary = boundaries[i];
-        auto next_boundary = boundaries[i + 1];
+    size_t boundary = 0;
 
-        if (auto it = first_cased_code_point_after_boundary(boundary, next_boundary); it.has_value()) {
+    while (true) {
+        auto next_boundary = next_word_segmentation_boundary(code_points, boundary);
+        if (!next_boundary.has_value())
+            break;
+
+        if (auto it = first_cased_code_point_after_boundary(boundary, *next_boundary); it.has_value()) {
             auto code_point = *it.value();
             auto code_point_offset = code_points.byte_offset_of(*it);
             auto code_point_length = it->underlying_code_point_length_in_bytes();
@@ -317,8 +317,10 @@ ErrorOr<void> build_titlecase_string([[maybe_unused]] Utf8View code_points, [[ma
             boundary = code_point_offset + code_point_length;
         }
 
-        auto substring_to_lowercase = code_points.substring_view(boundary, next_boundary - boundary);
+        auto substring_to_lowercase = code_points.substring_view(boundary, *next_boundary - boundary);
         TRY(build_lowercase_string(substring_to_lowercase, builder, locale));
+
+        boundary = *next_boundary;
     }
 
     return {};
@@ -328,31 +330,32 @@ ErrorOr<void> build_titlecase_string([[maybe_unused]] Utf8View code_points, [[ma
 }
 
 // https://www.unicode.org/versions/Unicode15.0.0/ch03.pdf#G53253
-ErrorOr<void> build_casefold_string([[maybe_unused]] Utf8View code_points, [[maybe_unused]] StringBuilder& builder)
+ErrorOr<void> build_casefold_string(Utf8View code_points, StringBuilder& builder)
 {
-#if ENABLE_UNICODE_DATA
     // toCasefold(X): Map each character C in X to Case_Folding(C).
-    //
-    // Case_Folding(C) uses the mappings with the status field value “C” or “F” in the data file
-    // CaseFolding.txt in the Unicode Character Database.
-
-    using enum CaseFoldingStatus;
-
     for (auto code_point : code_points) {
-        auto const* case_folding = find_matching_case_folding<Common, Full>(code_point);
-        if (!case_folding) {
-            TRY(builder.try_append_code_point(code_point));
-            continue;
-        }
-
-        for (size_t i = 0; i < case_folding->mapping_size; ++i)
-            TRY(builder.try_append_code_point(case_folding->mapping[i]));
+        auto case_folding = casefold_code_point(code_point);
+        TRY(builder.try_append(case_folding));
     }
 
     return {};
-#else
-    return Error::from_string_literal("Unicode data has been disabled");
+}
+
+// https://www.unicode.org/reports/tr44/#CaseFolding.txt
+// https://www.unicode.org/versions/Unicode15.0.0/ch03.pdf#G53253
+Utf32View casefold_code_point(u32 const& code_point)
+{
+#if ENABLE_UNICODE_DATA
+    // Case_Folding(C) uses the mappings with the status field value “C” or “F” in the data file
+    // CaseFolding.txt in the Unicode Character Database.
+    using enum CaseFoldingStatus;
+
+    if (auto const* case_folding = find_matching_case_folding<Common, Full>(code_point))
+        return Utf32View { case_folding->mapping, case_folding->mapping_size };
 #endif
+
+    // The case foldings are omitted in the data file if they are the same as the code point itself.
+    return Utf32View { &code_point, 1 };
 }
 
 }

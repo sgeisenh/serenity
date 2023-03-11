@@ -5,7 +5,6 @@
  */
 
 #include <AK/Assertions.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/StringView.h>
 #include <Kernel/Arch/CPU.h>
 #include <Kernel/Arch/PageDirectory.h>
@@ -366,7 +365,7 @@ UNMAP_AFTER_INIT void MemoryManager::parse_memory_map()
         }
 
         for (auto& region : global_data.physical_regions)
-            global_data.system_memory_info.physical_pages += region.size();
+            global_data.system_memory_info.physical_pages += region->size();
 
         register_reserved_ranges();
         for (auto& range : global_data.reserved_memory_ranges) {
@@ -385,8 +384,8 @@ UNMAP_AFTER_INIT void MemoryManager::parse_memory_map()
         }
 
         for (auto& region : global_data.physical_regions) {
-            dmesgln("MM: User physical region: {} - {} (size {:#x})", region.lower(), region.upper().offset(-1), PAGE_SIZE * region.size());
-            region.initialize_zones();
+            dmesgln("MM: User physical region: {} - {} (size {:#x})", region->lower(), region->upper().offset(-1), PAGE_SIZE * region->size());
+            region->initialize_zones();
         }
     });
 }
@@ -426,8 +425,8 @@ UNMAP_AFTER_INIT void MemoryManager::initialize_physical_pages()
         Optional<size_t> found_region_index;
         for (size_t i = 0; i < global_data.physical_regions.size(); ++i) {
             auto& region = global_data.physical_regions[i];
-            if (region.size() >= physical_page_array_pages_and_page_tables_count) {
-                found_region = &region;
+            if (region->size() >= physical_page_array_pages_and_page_tables_count) {
+                found_region = region;
                 found_region_index = i;
                 break;
             }
@@ -785,18 +784,18 @@ ErrorOr<NonnullOwnPtr<Memory::Region>> MemoryManager::allocate_dma_buffer_page(S
     return allocate_dma_buffer_page(name, access, dma_buffer_page);
 }
 
-ErrorOr<NonnullOwnPtr<Memory::Region>> MemoryManager::allocate_dma_buffer_pages(size_t size, StringView name, Memory::Region::Access access, NonnullRefPtrVector<Memory::PhysicalPage>& dma_buffer_pages)
+ErrorOr<NonnullOwnPtr<Memory::Region>> MemoryManager::allocate_dma_buffer_pages(size_t size, StringView name, Memory::Region::Access access, Vector<NonnullRefPtr<Memory::PhysicalPage>>& dma_buffer_pages)
 {
     VERIFY(!(size % PAGE_SIZE));
     dma_buffer_pages = TRY(allocate_contiguous_physical_pages(size));
     // Do not enable Cache for this region as physical memory transfers are performed (Most architectures have this behaviour by default)
-    return allocate_kernel_region(dma_buffer_pages.first().paddr(), size, name, access, Region::Cacheable::No);
+    return allocate_kernel_region(dma_buffer_pages.first()->paddr(), size, name, access, Region::Cacheable::No);
 }
 
 ErrorOr<NonnullOwnPtr<Memory::Region>> MemoryManager::allocate_dma_buffer_pages(size_t size, StringView name, Memory::Region::Access access)
 {
     VERIFY(!(size % PAGE_SIZE));
-    NonnullRefPtrVector<Memory::PhysicalPage> dma_buffer_pages;
+    Vector<NonnullRefPtr<Memory::PhysicalPage>> dma_buffer_pages;
 
     return allocate_dma_buffer_pages(size, name, access, dma_buffer_pages);
 }
@@ -864,12 +863,14 @@ ErrorOr<CommittedPhysicalPageSet> MemoryManager::commit_physical_pages(size_t pa
                 amount_shared = space->amount_shared();
                 amount_virtual = space->amount_virtual();
             });
-            dbgln("{}({}) resident:{}, shared:{}, virtual:{}",
-                process.name(),
-                process.pid(),
-                amount_resident / PAGE_SIZE,
-                amount_shared / PAGE_SIZE,
-                amount_virtual / PAGE_SIZE);
+            process.name().with([&](auto& process_name) {
+                dbgln("{}({}) resident:{}, shared:{}, virtual:{}",
+                    process_name->view(),
+                    process.pid(),
+                    amount_resident / PAGE_SIZE,
+                    amount_shared / PAGE_SIZE,
+                    amount_virtual / PAGE_SIZE);
+            });
             return IterationDecision::Continue;
         });
     }
@@ -893,10 +894,10 @@ void MemoryManager::deallocate_physical_page(PhysicalAddress paddr)
     return m_global_data.with([&](auto& global_data) {
         // Are we returning a user page?
         for (auto& region : global_data.physical_regions) {
-            if (!region.contains(paddr))
+            if (!region->contains(paddr))
                 continue;
 
-            region.return_page(paddr);
+            region->return_page(paddr);
             --global_data.system_memory_info.physical_pages_used;
 
             // Always return pages to the uncommitted pool. Pages that were
@@ -924,7 +925,7 @@ RefPtr<PhysicalPage> MemoryManager::find_free_physical_page(bool committed)
             global_data.system_memory_info.physical_pages_uncommitted--;
         }
         for (auto& region : global_data.physical_regions) {
-            page = region.take_free_page();
+            page = region->take_free_page();
             if (!page.is_null()) {
                 ++global_data.system_memory_info.physical_pages_used;
                 break;
@@ -1008,18 +1009,18 @@ ErrorOr<NonnullRefPtr<PhysicalPage>> MemoryManager::allocate_physical_page(Shoul
     });
 }
 
-ErrorOr<NonnullRefPtrVector<PhysicalPage>> MemoryManager::allocate_contiguous_physical_pages(size_t size)
+ErrorOr<Vector<NonnullRefPtr<PhysicalPage>>> MemoryManager::allocate_contiguous_physical_pages(size_t size)
 {
     VERIFY(!(size % PAGE_SIZE));
     size_t page_count = ceil_div(size, static_cast<size_t>(PAGE_SIZE));
 
-    auto physical_pages = TRY(m_global_data.with([&](auto& global_data) -> ErrorOr<NonnullRefPtrVector<PhysicalPage>> {
+    auto physical_pages = TRY(m_global_data.with([&](auto& global_data) -> ErrorOr<Vector<NonnullRefPtr<PhysicalPage>>> {
         // We need to make sure we don't touch pages that we have committed to
         if (global_data.system_memory_info.physical_pages_uncommitted < page_count)
             return ENOMEM;
 
         for (auto& physical_region : global_data.physical_regions) {
-            auto physical_pages = physical_region.take_contiguous_free_pages(page_count);
+            auto physical_pages = physical_region->take_contiguous_free_pages(page_count);
             if (!physical_pages.is_empty()) {
                 global_data.system_memory_info.physical_pages_uncommitted -= page_count;
                 global_data.system_memory_info.physical_pages_used += page_count;
@@ -1031,7 +1032,7 @@ ErrorOr<NonnullRefPtrVector<PhysicalPage>> MemoryManager::allocate_contiguous_ph
     }));
 
     {
-        auto cleanup_region = TRY(MM.allocate_kernel_region(physical_pages[0].paddr(), PAGE_SIZE * page_count, {}, Region::Access::Read | Region::Access::Write));
+        auto cleanup_region = TRY(MM.allocate_kernel_region(physical_pages[0]->paddr(), PAGE_SIZE * page_count, {}, Region::Access::Read | Region::Access::Write));
         memset(cleanup_region->vaddr().as_ptr(), 0, PAGE_SIZE * page_count);
     }
     return physical_pages;

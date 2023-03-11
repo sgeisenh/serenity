@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,11 +12,12 @@
 #include <AK/Forward.h>
 #include <AK/NumericLimits.h>
 #include <AK/StdLibExtras.h>
+#include <AK/String.h>
 #include <AK/Try.h>
 #include <AK/TypeList.h>
 #include <AK/Variant.h>
 #include <LibCore/SharedCircularQueue.h>
-#include <LibCore/Stream.h>
+#include <LibCore/Socket.h>
 #include <LibIPC/Concepts.h>
 #include <LibIPC/File.h>
 #include <LibIPC/Forward.h>
@@ -32,7 +34,7 @@ inline ErrorOr<T> decode(Decoder&)
 
 class Decoder {
 public:
-    Decoder(AK::Stream& stream, Core::Stream::LocalSocket& socket)
+    Decoder(Stream& stream, Core::LocalSocket& socket)
         : m_stream(stream)
         , m_socket(socket)
     {
@@ -56,11 +58,12 @@ public:
 
     ErrorOr<size_t> decode_size();
 
-    Core::Stream::LocalSocket& socket() { return m_socket; }
+    Stream& stream() { return m_stream; }
+    Core::LocalSocket& socket() { return m_socket; }
 
 private:
-    AK::Stream& m_stream;
-    Core::Stream::LocalSocket& m_socket;
+    Stream& m_stream;
+    Core::LocalSocket& m_socket;
 };
 
 template<Arithmetic T>
@@ -79,6 +82,9 @@ ErrorOr<T> decode(Decoder& decoder)
 }
 
 template<>
+ErrorOr<String> decode(Decoder&);
+
+template<>
 ErrorOr<DeprecatedString> decode(Decoder&);
 
 template<>
@@ -86,6 +92,9 @@ ErrorOr<ByteBuffer> decode(Decoder&);
 
 template<>
 ErrorOr<JsonValue> decode(Decoder&);
+
+template<>
+ErrorOr<Time> decode(Decoder&);
 
 template<>
 ErrorOr<URL> decode(Decoder&);

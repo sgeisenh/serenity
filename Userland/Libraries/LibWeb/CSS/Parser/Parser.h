@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, the SerenityOS developers.
- * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,8 +8,6 @@
 #pragma once
 
 #include <AK/Error.h>
-#include <AK/NonnullOwnPtrVector.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/RefPtr.h>
 #include <AK/Vector.h>
 #include <LibWeb/CSS/CSSStyleDeclaration.h>
@@ -35,7 +33,6 @@ namespace Web::CSS::Parser {
 
 class ParsingContext {
 public:
-    ParsingContext();
     explicit ParsingContext(JS::Realm&);
     explicit ParsingContext(DOM::Document const&);
     explicit ParsingContext(DOM::Document const&, AK::URL);
@@ -43,7 +40,7 @@ public:
 
     bool in_quirks_mode() const;
     DOM::Document const* document() const { return m_document; }
-    AK::URL complete_url(DeprecatedString const&) const;
+    AK::URL complete_url(StringView) const;
 
     PropertyID current_property_id() const { return m_current_property_id; }
     void set_current_property_id(PropertyID property_id) { m_current_property_id = property_id; }
@@ -59,8 +56,9 @@ private:
 
 class Parser {
 public:
-    Parser(ParsingContext const&, StringView input, DeprecatedString const& encoding = "utf-8");
-    ~Parser() = default;
+    static ErrorOr<Parser> create(ParsingContext const&, StringView input, StringView encoding = "utf-8"sv);
+
+    Parser(Parser&&);
 
     CSSStyleSheet* parse_as_css_stylesheet(Optional<AK::URL> location);
     ElementInlineCSSStyleDeclaration* parse_as_style_attribute(DOM::Element&);
@@ -78,7 +76,7 @@ public:
     Optional<SelectorList> parse_as_selector(SelectorParsingMode = SelectorParsingMode::Standard);
     Optional<SelectorList> parse_as_relative_selector(SelectorParsingMode = SelectorParsingMode::Standard);
 
-    NonnullRefPtrVector<MediaQuery> parse_as_media_query_list();
+    Vector<NonnullRefPtr<MediaQuery>> parse_as_media_query_list();
     RefPtr<MediaQuery> parse_as_media_query();
 
     RefPtr<Supports> parse_as_supports();
@@ -89,6 +87,8 @@ public:
     static RefPtr<CalculatedStyleValue> parse_calculated_value(Badge<StyleComputer>, ParsingContext const&, Vector<ComponentValue> const&);
 
 private:
+    Parser(ParsingContext const&, Vector<Token>);
+
     enum class ParseError {
         IncludesIgnoredVendorPrefix,
         SyntaxError,
@@ -99,14 +99,14 @@ private:
     // "Parse a stylesheet" is intended to be the normal parser entry point, for parsing stylesheets.
     struct ParsedStyleSheet {
         Optional<AK::URL> location;
-        NonnullRefPtrVector<Rule> rules;
+        Vector<NonnullRefPtr<Rule>> rules;
     };
     template<typename T>
     ParsedStyleSheet parse_a_stylesheet(TokenStream<T>&, Optional<AK::URL> location);
 
     // "Parse a list of rules" is intended for the content of at-rules such as @media. It differs from "Parse a stylesheet" in the handling of <CDO-token> and <CDC-token>.
     template<typename T>
-    NonnullRefPtrVector<Rule> parse_a_list_of_rules(TokenStream<T>&);
+    Vector<NonnullRefPtr<Rule>> parse_a_list_of_rules(TokenStream<T>&);
 
     // "Parse a rule" is intended for use by the CSSStyleSheet#insertRule method, and similar functions which might exist, which parse text into a single rule.
     template<typename T>
@@ -142,7 +142,7 @@ private:
     ParseErrorOr<SelectorList> parse_a_selector_list(TokenStream<T>&, SelectorType, SelectorParsingMode = SelectorParsingMode::Standard);
 
     template<typename T>
-    NonnullRefPtrVector<MediaQuery> parse_a_media_query_list(TokenStream<T>&);
+    Vector<NonnullRefPtr<MediaQuery>> parse_a_media_query_list(TokenStream<T>&);
     template<typename T>
     RefPtr<Supports> parse_a_supports(TokenStream<T>&);
 
@@ -153,7 +153,7 @@ private:
         Yes
     };
     template<typename T>
-    [[nodiscard]] NonnullRefPtrVector<Rule> consume_a_list_of_rules(TokenStream<T>&, TopLevel);
+    [[nodiscard]] Vector<NonnullRefPtr<Rule>> consume_a_list_of_rules(TokenStream<T>&, TopLevel);
     template<typename T>
     [[nodiscard]] NonnullRefPtr<Rule> consume_an_at_rule(TokenStream<T>&);
     template<typename T>
@@ -362,7 +362,6 @@ private:
 
     ParsingContext m_context;
 
-    Tokenizer m_tokenizer;
     Vector<Token> m_tokens;
     TokenStream<Token> m_token_stream;
 };
@@ -377,7 +376,8 @@ RefPtr<CSS::StyleValue> parse_css_value(CSS::Parser::ParsingContext const&, Stri
 Optional<CSS::SelectorList> parse_selector(CSS::Parser::ParsingContext const&, StringView);
 CSS::CSSRule* parse_css_rule(CSS::Parser::ParsingContext const&, StringView);
 RefPtr<CSS::MediaQuery> parse_media_query(CSS::Parser::ParsingContext const&, StringView);
-NonnullRefPtrVector<CSS::MediaQuery> parse_media_query_list(CSS::Parser::ParsingContext const&, StringView);
+Vector<NonnullRefPtr<CSS::MediaQuery>> parse_media_query_list(CSS::Parser::ParsingContext const&, StringView);
 RefPtr<CSS::Supports> parse_css_supports(CSS::Parser::ParsingContext const&, StringView);
+Optional<CSS::StyleProperty> parse_css_supports_condition(CSS::Parser::ParsingContext const&, StringView);
 
 }

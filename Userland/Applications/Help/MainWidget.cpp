@@ -14,7 +14,6 @@
 #include <AK/URL.h>
 #include <Applications/Help/HelpWindowGML.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibDesktop/Launcher.h>
 #include <LibGUI/Action.h>
@@ -214,7 +213,7 @@ ErrorOr<void> MainWidget::initialize_fallibles(GUI::Window& window)
     TRY(go_menu->try_add_action(*m_go_home_action));
 
     auto help_menu = TRY(window.try_add_menu("&Help"));
-    String help_page_path = TRY(TRY(try_make_ref_counted<Manual::PageNode>(Manual::sections[1 - 1], TRY(String::from_utf8("Help"sv))))->path());
+    String help_page_path = TRY(TRY(try_make_ref_counted<Manual::PageNode>(Manual::sections[1 - 1], TRY("Help"_string)))->path());
     TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(&window)));
     TRY(help_menu->try_add_action(GUI::Action::create("&Contents", { Key_F1 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-unknown.png"sv)), [this, help_page_path = move(help_page_path)](auto&) {
         open_page(help_page_path);
@@ -247,24 +246,22 @@ void MainWidget::open_url(URL const& url)
         m_web_view->load(url);
         m_web_view->scroll_to_top();
 
-        GUI::Application::the()->deferred_invoke([&, path = url.path()] {
-            auto browse_view_index = m_manual_model->index_from_path(path);
-            if (browse_view_index.has_value()) {
-                if (browse_view_index.value() != m_browse_view->selection_start_index()) {
-                    m_browse_view->expand_all_parents_of(browse_view_index.value());
-                    m_browse_view->set_cursor(browse_view_index.value(), GUI::AbstractView::SelectionUpdate::Set);
-                }
-
-                auto page_and_section = m_manual_model->page_and_section(browse_view_index.value());
-                if (!page_and_section.has_value())
-                    return;
-                auto title = String::formatted("{} - Help", page_and_section.value());
-                if (!title.is_error())
-                    window()->set_title(title.release_value().to_deprecated_string());
-            } else {
-                window()->set_title("Help");
+        auto browse_view_index = m_manual_model->index_from_path(url.path());
+        if (browse_view_index.has_value()) {
+            if (browse_view_index.value() != m_browse_view->selection_start_index()) {
+                m_browse_view->expand_all_parents_of(browse_view_index.value());
+                m_browse_view->set_cursor(browse_view_index.value(), GUI::AbstractView::SelectionUpdate::Set);
             }
-        });
+
+            auto page_and_section = m_manual_model->page_and_section(browse_view_index.value());
+            if (!page_and_section.has_value())
+                return;
+            auto title = String::formatted("{} - Help", page_and_section.value());
+            if (!title.is_error())
+                window()->set_title(title.release_value().to_deprecated_string());
+        } else {
+            window()->set_title("Help");
+        }
     }
 }
 

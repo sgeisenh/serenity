@@ -35,6 +35,11 @@ enum class NodeType : u16 {
     NOTATION_NODE = 12
 };
 
+enum class NameOrDescription {
+    Name,
+    Description
+};
+
 struct GetRootNodeOptions {
     bool composed { false };
 };
@@ -80,6 +85,9 @@ public:
     virtual bool is_html_html_element() const { return false; }
     virtual bool is_html_anchor_element() const { return false; }
     virtual bool is_html_base_element() const { return false; }
+    virtual bool is_html_body_element() const { return false; }
+    virtual bool is_html_input_element() const { return false; }
+    virtual bool is_html_progress_element() const { return false; }
     virtual bool is_html_template_element() const { return false; }
     virtual bool is_browsing_context_container() const { return false; }
 
@@ -219,7 +227,7 @@ public:
 
     void add_registered_observer(RegisteredObserver& registered_observer) { m_registered_observer_list.append(registered_observer); }
 
-    void queue_mutation_record(DeprecatedFlyString const& type, DeprecatedString attribute_name, DeprecatedString attribute_namespace, DeprecatedString old_value, JS::NonnullGCPtr<NodeList> added_nodes, JS::NonnullGCPtr<NodeList> removed_nodes, Node* previous_sibling, Node* next_sibling);
+    void queue_mutation_record(DeprecatedFlyString const& type, DeprecatedString attribute_name, DeprecatedString attribute_namespace, DeprecatedString old_value, JS::NonnullGCPtr<NodeList> added_nodes, JS::NonnullGCPtr<NodeList> removed_nodes, Node* previous_sibling, Node* next_sibling) const;
 
     // https://dom.spec.whatwg.org/#concept-shadow-including-descendant
     template<typename Callback>
@@ -429,7 +437,7 @@ public:
     template<typename U, typename Callback>
     IterationDecision for_each_in_inclusive_subtree_of_type(Callback callback)
     {
-        if (is<U>(static_cast<Node const&>(*this))) {
+        if (is<U>(static_cast<Node&>(*this))) {
             if (callback(static_cast<U&>(*this)) == IterationDecision::Break)
                 return IterationDecision::Break;
         }
@@ -617,6 +625,9 @@ public:
         return false;
     }
 
+    ErrorOr<String> accessible_name(Document const&) const;
+    ErrorOr<String> accessible_description(Document const&) const;
+
 protected:
     Node(JS::Realm&, Document&, NodeType);
     Node(Document&, NodeType);
@@ -636,7 +647,9 @@ protected:
     // "Nodes have a strong reference to registered observers in their registered observer list." https://dom.spec.whatwg.org/#garbage-collection
     Vector<RegisteredObserver&> m_registered_observer_list;
 
-    void build_accessibility_tree(AccessibilityTreeNode& parent) const;
+    void build_accessibility_tree(AccessibilityTreeNode& parent);
+
+    ErrorOr<String> name_or_description(NameOrDescription, Document const&, HashTable<i32>&) const;
 
 private:
     void queue_tree_mutation_record(JS::NonnullGCPtr<NodeList> added_nodes, JS::NonnullGCPtr<NodeList> removed_nodes, Node* previous_sibling, Node* next_sibling);
@@ -644,6 +657,12 @@ private:
     void insert_before_impl(JS::NonnullGCPtr<Node>, JS::GCPtr<Node> child);
     void append_child_impl(JS::NonnullGCPtr<Node>);
     void remove_child_impl(JS::NonnullGCPtr<Node>);
+
+    static Optional<StringView> first_valid_id(DeprecatedString const&, Document const&);
+    static ErrorOr<void> append_without_space(StringBuilder, StringView const&);
+    static ErrorOr<void> append_with_space(StringBuilder, StringView const&);
+    static ErrorOr<void> prepend_without_space(StringBuilder, StringView const&);
+    static ErrorOr<void> prepend_with_space(StringBuilder, StringView const&);
 
     JS::GCPtr<Node> m_parent;
     JS::GCPtr<Node> m_first_child;

@@ -30,6 +30,9 @@ void MergeBlocks::perform(PassPipelineExecutable& executable)
         if (executable.exported_blocks->contains(*entry.value.begin()))
             continue;
 
+        if (!entry.key->is_terminated())
+            continue;
+
         if (entry.key->terminator()->type() != Instruction::Type::Jump)
             continue;
 
@@ -78,7 +81,7 @@ void MergeBlocks::perform(PassPipelineExecutable& executable)
                 first_successor_position = it.index();
         }
         for (auto& block : executable.executable.basic_blocks) {
-            InstructionStreamIterator it { block.instruction_stream() };
+            InstructionStreamIterator it { block->instruction_stream() };
             while (!it.at_end()) {
                 auto& instruction = *it;
                 ++it;

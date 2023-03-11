@@ -68,7 +68,7 @@ JS::VM& main_thread_vm()
         vm->host_ensure_can_add_private_element = [](JS::Object const& object) -> JS::ThrowCompletionOr<void> {
             // 1. If O is a WindowProxy object, or implements Location, then return Completion { [[Type]]: throw, [[Value]]: a new TypeError }.
             if (is<HTML::WindowProxy>(object) || is<HTML::Location>(object))
-                return vm->throw_completion<JS::TypeError>("Cannot add private elements to window or location object");
+                return vm->throw_completion<JS::TypeError>("Cannot add private elements to window or location object"sv);
 
             // 2. Return NormalCompletion(unused).
             return {};
@@ -138,8 +138,8 @@ JS::VM& main_thread_vm()
                         /* .promise = */ promise,
                         /* .reason = */ promise.result(),
                     };
-                    auto promise_rejection_event = HTML::PromiseRejectionEvent::create(HTML::relevant_realm(global), HTML::EventNames::rejectionhandled, event_init);
-                    window.dispatch_event(*promise_rejection_event);
+                    auto promise_rejection_event = HTML::PromiseRejectionEvent::create(HTML::relevant_realm(global), String::from_deprecated_string(HTML::EventNames::rejectionhandled).release_value_but_fixme_should_propagate_errors(), event_init).release_value_but_fixme_should_propagate_errors();
+                    window.dispatch_event(promise_rejection_event);
                 });
                 break;
             }
@@ -368,34 +368,12 @@ JS::VM& main_thread_vm()
             // 10. Return resolvedModuleScript's record.
             return JS::NonnullGCPtr(*resolved_module_script.module_script->record());
         };
-
-        // NOTE: We push a dummy execution context onto the JS execution context stack,
-        //       just to make sure that it's never empty.
-        auto& custom_data = *verify_cast<WebEngineCustomData>(vm->custom_data());
-        custom_data.root_execution_context = MUST(JS::Realm::initialize_host_defined_realm(*vm, nullptr, nullptr));
-
-        auto* root_realm = custom_data.root_execution_context->realm;
-        auto intrinsics = root_realm->heap().allocate<Intrinsics>(*root_realm, *root_realm).release_allocated_value_but_fixme_should_propagate_errors();
-        auto host_defined = make<HostDefined>(nullptr, intrinsics);
-        root_realm->set_host_defined(move(host_defined));
-        custom_data.internal_realm = root_realm;
-
-        // NOTE: We make sure the internal realm has all the Window intrinsics initialized.
-        //       The DeferGC is a hack to avoid nested GC allocations due to lazy ensure_web_prototype()
-        //       and ensure_web_constructor() invocations.
-        // FIXME: Find a nicer way to do this.
-        JS::DeferGC defer_gc(root_realm->heap());
-        auto object = JS::Object::create(*root_realm, nullptr);
-        root_realm->set_global_object(object, object);
-        add_window_exposed_interfaces(*object);
-
-        vm->push_execution_context(*custom_data.root_execution_context);
     }
     return *vm;
 }
 
 // https://dom.spec.whatwg.org/#queue-a-mutation-observer-compound-microtask
-void queue_mutation_observer_microtask(DOM::Document& document)
+void queue_mutation_observer_microtask(DOM::Document const& document)
 {
     auto& vm = main_thread_vm();
     auto& custom_data = verify_cast<WebEngineCustomData>(*vm.custom_data());

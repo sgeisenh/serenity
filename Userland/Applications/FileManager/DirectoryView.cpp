@@ -11,7 +11,7 @@
 #include <AK/NumberFormat.h>
 #include <AK/StringBuilder.h>
 #include <LibConfig/Client.h>
-#include <LibCore/File.h>
+#include <LibCore/DeprecatedFile.h>
 #include <LibCore/MimeData.h>
 #include <LibCore/StandardPaths.h>
 #include <LibGUI/FileIconProvider.h>
@@ -52,21 +52,21 @@ NonnullRefPtr<GUI::Action> LauncherHandler::create_launch_action(Function<void(L
     });
 }
 
-RefPtr<LauncherHandler> DirectoryView::get_default_launch_handler(NonnullRefPtrVector<LauncherHandler> const& handlers)
+RefPtr<LauncherHandler> DirectoryView::get_default_launch_handler(Vector<NonnullRefPtr<LauncherHandler>> const& handlers)
 {
     // If this is an application, pick it first
     for (size_t i = 0; i < handlers.size(); i++) {
-        if (handlers[i].details().launcher_type == Desktop::Launcher::LauncherType::Application)
+        if (handlers[i]->details().launcher_type == Desktop::Launcher::LauncherType::Application)
             return handlers[i];
     }
     // If there's a handler preferred by the user, pick this first
     for (size_t i = 0; i < handlers.size(); i++) {
-        if (handlers[i].details().launcher_type == Desktop::Launcher::LauncherType::UserPreferred)
+        if (handlers[i]->details().launcher_type == Desktop::Launcher::LauncherType::UserPreferred)
             return handlers[i];
     }
     // Otherwise, use the user's default, if available
     for (size_t i = 0; i < handlers.size(); i++) {
-        if (handlers[i].details().launcher_type == Desktop::Launcher::LauncherType::UserDefault)
+        if (handlers[i]->details().launcher_type == Desktop::Launcher::LauncherType::UserDefault)
             return handlers[i];
     }
     // If still no match, use the first one we find
@@ -77,16 +77,16 @@ RefPtr<LauncherHandler> DirectoryView::get_default_launch_handler(NonnullRefPtrV
     return {};
 }
 
-NonnullRefPtrVector<LauncherHandler> DirectoryView::get_launch_handlers(URL const& url)
+Vector<NonnullRefPtr<LauncherHandler>> DirectoryView::get_launch_handlers(URL const& url)
 {
-    NonnullRefPtrVector<LauncherHandler> handlers;
+    Vector<NonnullRefPtr<LauncherHandler>> handlers;
     for (auto& h : Desktop::Launcher::get_handlers_with_details_for_url(url)) {
         handlers.append(adopt_ref(*new LauncherHandler(h)));
     }
     return handlers;
 }
 
-NonnullRefPtrVector<LauncherHandler> DirectoryView::get_launch_handlers(DeprecatedString const& path)
+Vector<NonnullRefPtr<LauncherHandler>> DirectoryView::get_launch_handlers(DeprecatedString const& path)
 {
     return get_launch_handlers(URL::create_with_file_scheme(path));
 }
@@ -204,7 +204,7 @@ void DirectoryView::setup_model()
 
         while (model_root.string() != "/") {
             model_root = model_root.parent();
-            if (Core::File::is_directory(model_root.string()))
+            if (Core::DeprecatedFile::is_directory(model_root.string()))
                 break;
         }
 
@@ -405,8 +405,8 @@ void DirectoryView::add_path_to_history(DeprecatedString path)
 
 bool DirectoryView::open(DeprecatedString const& path)
 {
-    auto real_path = Core::File::real_path_for(path);
-    if (real_path.is_null() || !Core::File::is_directory(path))
+    auto real_path = Core::DeprecatedFile::real_path_for(path);
+    if (real_path.is_null() || !Core::DeprecatedFile::is_directory(path))
         return false;
 
     if (chdir(real_path.characters()) < 0) {
@@ -555,7 +555,7 @@ bool DirectoryView::can_modify_current_selection()
     // FIXME: remove once Clang formats this properly.
     // clang-format off
     return selections.first_matching([&](auto& index) {
-        return Core::File::can_delete_or_move(node(index).full_path());
+        return Core::DeprecatedFile::can_delete_or_move(node(index).full_path());
     }).has_value();
     // clang-format on
 }
@@ -577,7 +577,7 @@ void DirectoryView::setup_actions()
 {
     m_mkdir_action = GUI::Action::create("&New Directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"sv).release_value_but_fixme_should_propagate_errors(), [&](GUI::Action const&) {
         DeprecatedString value;
-        if (GUI::InputBox::show(window(), value, "Enter name:"sv, "New directory"sv) == GUI::InputBox::ExecResult::OK && !value.is_empty()) {
+        if (GUI::InputBox::show(window(), value, "Enter name:"sv, "New directory"sv, GUI::InputType::NonemptyText) == GUI::InputBox::ExecResult::OK) {
             auto new_dir_path = LexicalPath::canonicalized_path(DeprecatedString::formatted("{}/{}", path(), value));
             int rc = mkdir(new_dir_path.characters(), 0777);
             if (rc < 0) {
@@ -589,7 +589,7 @@ void DirectoryView::setup_actions()
 
     m_touch_action = GUI::Action::create("New &File...", { Mod_Ctrl | Mod_Shift, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/new.png"sv).release_value_but_fixme_should_propagate_errors(), [&](GUI::Action const&) {
         DeprecatedString value;
-        if (GUI::InputBox::show(window(), value, "Enter name:"sv, "New file"sv) == GUI::InputBox::ExecResult::OK && !value.is_empty()) {
+        if (GUI::InputBox::show(window(), value, "Enter name:"sv, "New file"sv, GUI::InputType::NonemptyText) == GUI::InputBox::ExecResult::OK) {
             auto new_file_path = LexicalPath::canonicalized_path(DeprecatedString::formatted("{}/{}", path(), value));
             struct stat st;
             int rc = stat(new_file_path.characters(), &st);
@@ -659,35 +659,11 @@ void DirectoryView::setup_actions()
 
 void DirectoryView::handle_drop(GUI::ModelIndex const& index, GUI::DropEvent const& event)
 {
-    if (!event.mime_data().has_urls())
-        return;
-    auto urls = event.mime_data().urls();
-    if (urls.is_empty()) {
-        dbgln("No files to drop");
-        return;
-    }
+    auto const& target_node = node(index);
 
-    auto& target_node = node(index);
-    if (!target_node.is_directory())
-        return;
+    bool const has_accepted_drop = ::FileManager::handle_drop(event, target_node.full_path(), window()).release_value_but_fixme_should_propagate_errors();
 
-    bool had_accepted_drop = false;
-    Vector<DeprecatedString> paths_to_copy;
-    for (auto& url_to_copy : urls) {
-        if (!url_to_copy.is_valid() || url_to_copy.path() == target_node.full_path())
-            continue;
-        auto new_path = DeprecatedString::formatted("{}/{}", target_node.full_path(), LexicalPath::basename(url_to_copy.path()));
-        if (url_to_copy.path() == new_path)
-            continue;
-
-        paths_to_copy.append(url_to_copy.path());
-        had_accepted_drop = true;
-    }
-
-    if (!paths_to_copy.is_empty())
-        MUST(run_file_operation(FileOperation::Copy, paths_to_copy, target_node.full_path(), window()));
-
-    if (had_accepted_drop && on_accepted_drop)
+    if (has_accepted_drop && on_accepted_drop)
         on_accepted_drop();
 }
 

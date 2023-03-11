@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, David Tuin <davidot@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -49,19 +49,19 @@ static Vector<ModuleRequest> module_requests(Program& program, Vector<Deprecated
     // Note: The List is source text occurrence ordered!
     struct RequestedModuleAndSourceIndex {
         u32 source_offset { 0 };
-        ModuleRequest* module_request { nullptr };
+        ModuleRequest const* module_request { nullptr };
     };
 
     Vector<RequestedModuleAndSourceIndex> requested_modules_with_indices;
 
     for (auto& import_statement : program.imports())
-        requested_modules_with_indices.empend(import_statement.start_offset(), &import_statement.module_request());
+        requested_modules_with_indices.empend(import_statement->start_offset(), &import_statement->module_request());
 
     for (auto& export_statement : program.exports()) {
-        for (auto& export_entry : export_statement.entries()) {
+        for (auto& export_entry : export_statement->entries()) {
             if (!export_entry.is_module_request())
                 continue;
-            requested_modules_with_indices.empend(export_statement.start_offset(), &export_statement.module_request());
+            requested_modules_with_indices.empend(export_statement->start_offset(), &export_statement->module_request());
         }
     }
 
@@ -89,7 +89,7 @@ static Vector<ModuleRequest> module_requests(Program& program, Vector<Deprecated
             // 2. Let assertions be AssertClauseToAssertions of AssertClause.
             auto assertions = assert_clause_to_assertions(module.module_request->assertions, supported_import_assertions);
             // Note: We have to modify the assertions in place because else it might keep non supported ones
-            module.module_request->assertions = move(assertions);
+            const_cast<ModuleRequest*>(module.module_request)->assertions = move(assertions);
 
             // 3. Return a ModuleRequest Record { [[Specifer]]: specifier, [[Assertions]]: assertions }.
             requested_modules_in_source_order.empend(module.module_request->module_specifier, module.module_request->assertions);
@@ -102,7 +102,7 @@ static Vector<ModuleRequest> module_requests(Program& program, Vector<Deprecated
 SourceTextModule::SourceTextModule(Realm& realm, StringView filename, Script::HostDefined* host_defined, bool has_top_level_await, NonnullRefPtr<Program> body, Vector<ModuleRequest> requested_modules,
     Vector<ImportEntry> import_entries, Vector<ExportEntry> local_export_entries,
     Vector<ExportEntry> indirect_export_entries, Vector<ExportEntry> star_export_entries,
-    RefPtr<ExportStatement> default_export)
+    RefPtr<ExportStatement const> default_export)
     : CyclicModule(realm, filename, has_top_level_await, move(requested_modules), host_defined)
     , m_ecmascript_code(move(body))
     , m_execution_context(realm.heap())
@@ -141,7 +141,7 @@ Result<NonnullGCPtr<SourceTextModule>, Vector<ParserError>> SourceTextModule::pa
     // 4. Let importEntries be ImportEntries of body.
     Vector<ImportEntry> import_entries;
     for (auto const& import_statement : body->imports())
-        import_entries.extend(import_statement.entries());
+        import_entries.extend(import_statement->entries());
 
     // 5. Let importedBoundNames be ImportedLocalNames(importEntries).
     // Note: Since we have to potentially extract the import entry we just use importEntries
@@ -157,18 +157,18 @@ Result<NonnullGCPtr<SourceTextModule>, Vector<ParserError>> SourceTextModule::pa
     Vector<ExportEntry> star_export_entries;
 
     // Note: Not in the spec but makes it easier to find the default.
-    RefPtr<ExportStatement> default_export;
+    RefPtr<ExportStatement const> default_export;
 
     // 9. Let exportEntries be ExportEntries of body.
     // 10. For each ExportEntry Record ee of exportEntries, do
     for (auto const& export_statement : body->exports()) {
 
-        if (export_statement.is_default_export()) {
+        if (export_statement->is_default_export()) {
             VERIFY(!default_export);
-            VERIFY(export_statement.entries().size() == 1);
-            VERIFY(export_statement.has_statement());
+            VERIFY(export_statement->entries().size() == 1);
+            VERIFY(export_statement->has_statement());
 
-            auto const& entry = export_statement.entries()[0];
+            auto const& entry = export_statement->entries()[0];
             VERIFY(entry.kind == ExportEntry::Kind::NamedExport);
             VERIFY(!entry.is_module_request());
             VERIFY(import_entries.find_if(
@@ -179,12 +179,12 @@ Result<NonnullGCPtr<SourceTextModule>, Vector<ParserError>> SourceTextModule::pa
             default_export = export_statement;
         }
 
-        for (auto const& export_entry : export_statement.entries()) {
+        for (auto const& export_entry : export_statement->entries()) {
 
             // Special case, export {} from "module" should add "module" to
             // required_modules but not any import or export so skip here.
             if (export_entry.kind == ExportEntry::Kind::EmptyNamedExport) {
-                VERIFY(export_statement.entries().size() == 1);
+                VERIFY(export_statement->entries().size() == 1);
                 break;
             }
 
@@ -436,7 +436,9 @@ ThrowCompletionOr<void> SourceTextModule::initialize_environment(VM& vm)
 
     // 21. For each element d of varDeclarations, do
     // a. For each element dn of the BoundNames of d, do
-    m_ecmascript_code->for_each_var_declared_name([&](auto const& name) {
+    // NOTE: Due to the use of MUST with `create_mutable_binding` and `initialize_binding` below,
+    //       an exception should not result from `for_each_var_declared_name`.
+    MUST(m_ecmascript_code->for_each_var_declared_name([&](auto const& name) {
         // i. If dn is not an element of declaredVarNames, then
         if (!declared_var_names.contains_slow(name)) {
             // 1. Perform ! env.CreateMutableBinding(dn, false).
@@ -448,7 +450,7 @@ ThrowCompletionOr<void> SourceTextModule::initialize_environment(VM& vm)
             // 3. Append dn to declaredVarNames.
             declared_var_names.empend(name);
         }
-    });
+    }));
 
     // 22. Let lexDeclarations be the LexicallyScopedDeclarations of code.
     // Note: We only loop through them in step 24.
@@ -457,9 +459,12 @@ ThrowCompletionOr<void> SourceTextModule::initialize_environment(VM& vm)
     PrivateEnvironment* private_environment = nullptr;
 
     // 24. For each element d of lexDeclarations, do
-    m_ecmascript_code->for_each_lexically_scoped_declaration([&](Declaration const& declaration) {
+    // NOTE: Due to the use of MUST in the callback, an exception should not result from `for_each_lexically_scoped_declaration`.
+    MUST(m_ecmascript_code->for_each_lexically_scoped_declaration([&](Declaration const& declaration) {
         // a. For each element dn of the BoundNames of d, do
-        declaration.for_each_bound_name([&](DeprecatedFlyString const& name) {
+        // NOTE: Due to the use of MUST with `create_immutable_binding`, `create_mutable_binding` and `initialize_binding` below,
+        //       an exception should not result from `for_each_bound_name`.
+        MUST(declaration.for_each_bound_name([&](DeprecatedFlyString const& name) {
             // i. If IsConstantDeclaration of d is true, then
             if (declaration.is_constant_declaration()) {
                 // 1. Perform ! env.CreateImmutableBinding(dn, true).
@@ -487,8 +492,8 @@ ThrowCompletionOr<void> SourceTextModule::initialize_environment(VM& vm)
                 // 2. Perform ! env.InitializeBinding(dn, fo, normal).
                 MUST(environment->initialize_binding(vm, name, function, Environment::InitializeBindingHint::Normal));
             }
-        });
-    });
+        }));
+    }));
 
     // Note: The default export name is also part of the local lexical declarations but
     //       instead of making that a special case in the parser we just check it here.

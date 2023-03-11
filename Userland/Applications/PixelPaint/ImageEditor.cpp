@@ -187,11 +187,11 @@ void ImageEditor::paint_event(GUI::PaintEvent& event)
 
     if (m_show_guides) {
         for (auto& guide : m_guides) {
-            if (guide.orientation() == Guide::Orientation::Horizontal) {
-                int y_coordinate = (int)content_to_frame_position({ 0.0f, guide.offset() }).y();
+            if (guide->orientation() == Guide::Orientation::Horizontal) {
+                int y_coordinate = (int)content_to_frame_position({ 0.0f, guide->offset() }).y();
                 painter.draw_line({ 0, y_coordinate }, { rect().width(), y_coordinate }, Color::Cyan, 1, Gfx::Painter::LineStyle::Dashed, Color::LightGray);
-            } else if (guide.orientation() == Guide::Orientation::Vertical) {
-                int x_coordinate = (int)content_to_frame_position({ guide.offset(), 0.0f }).x();
+            } else if (guide->orientation() == Guide::Orientation::Vertical) {
+                int x_coordinate = (int)content_to_frame_position({ guide->offset(), 0.0f }).x();
                 painter.draw_line({ x_coordinate, 0 }, { x_coordinate, rect().height() }, Color::Cyan, 1, Gfx::Painter::LineStyle::Dashed, Color::LightGray);
             }
         }
@@ -374,7 +374,7 @@ void ImageEditor::mousedown_event(GUI::MouseEvent& event)
         return;
 
     if (auto* tool = dynamic_cast<MoveTool*>(m_active_tool); tool && tool->layer_selection_mode() == MoveTool::LayerSelectionMode::ForegroundLayer) {
-        if (auto* foreground_layer = layer_at_editor_position(event.position()))
+        if (auto* foreground_layer = layer_at_editor_position(event.position()); foreground_layer && !tool->cursor_is_within_resize_anchor())
             set_active_layer(foreground_layer);
     }
 
@@ -733,7 +733,7 @@ void ImageEditor::save_project()
         save_project_as();
         return;
     }
-    auto response = FileSystemAccessClient::Client::the().request_file(window(), path(), Core::Stream::OpenMode::Truncate | Core::Stream::OpenMode::Write);
+    auto response = FileSystemAccessClient::Client::the().request_file(window(), path(), Core::File::OpenMode::Truncate | Core::File::OpenMode::Write);
     if (response.is_error())
         return;
     auto result = save_project_to_file(response.value().release_stream());
@@ -760,7 +760,7 @@ void ImageEditor::save_project_as()
     set_unmodified();
 }
 
-ErrorOr<void> ImageEditor::save_project_to_file(NonnullOwnPtr<Core::Stream::File> file) const
+ErrorOr<void> ImageEditor::save_project_to_file(NonnullOwnPtr<Core::File> file) const
 {
     StringBuilder builder;
     auto json = TRY(JsonObjectSerializer<>::try_create(builder));
@@ -768,10 +768,10 @@ ErrorOr<void> ImageEditor::save_project_to_file(NonnullOwnPtr<Core::Stream::File
     auto json_guides = TRY(json.add_array("guides"sv));
     for (auto const& guide : m_guides) {
         auto json_guide = TRY(json_guides.add_object());
-        TRY(json_guide.add("offset"sv, (double)guide.offset()));
-        if (guide.orientation() == Guide::Orientation::Vertical)
+        TRY(json_guide.add("offset"sv, (double)guide->offset()));
+        if (guide->orientation() == Guide::Orientation::Vertical)
             TRY(json_guide.add("orientation"sv, "vertical"));
-        else if (guide.orientation() == Guide::Orientation::Horizontal)
+        else if (guide->orientation() == Guide::Orientation::Horizontal)
             TRY(json_guide.add("orientation"sv, "horizontal"));
         TRY(json_guide.finish());
     }

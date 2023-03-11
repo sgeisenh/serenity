@@ -10,17 +10,17 @@
 #include <AK/LexicalPath.h>
 #include <AK/Optional.h>
 #include <AK/Platform.h>
-#include <LibCore/File.h>
+#include <LibCore/DeprecatedFile.h>
 #include <LibRegex/Regex.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 
 namespace Debug {
 
-DebugSession::DebugSession(pid_t pid, DeprecatedString source_root)
+DebugSession::DebugSession(pid_t pid, DeprecatedString source_root, Function<void(float)> on_initialization_progress)
     : m_debuggee_pid(pid)
     , m_source_root(source_root)
-
+    , m_on_initialization_progress(move(on_initialization_progress))
 {
 }
 
@@ -55,7 +55,8 @@ void DebugSession::for_each_loaded_library(Function<IterationDecision(LoadedLibr
 
 OwnPtr<DebugSession> DebugSession::exec_and_attach(DeprecatedString const& command,
     DeprecatedString source_root,
-    Function<ErrorOr<void>()> setup_child)
+    Function<ErrorOr<void>()> setup_child,
+    Function<void(float)> on_initialization_progress)
 {
     auto pid = fork();
 
@@ -114,7 +115,7 @@ OwnPtr<DebugSession> DebugSession::exec_and_attach(DeprecatedString const& comma
         return {};
     }
 
-    auto debug_session = adopt_own(*new DebugSession(pid, source_root));
+    auto debug_session = adopt_own(*new DebugSession(pid, source_root, move(on_initialization_progress)));
 
     // Continue until breakpoint before entry point of main program
     int wstatus = debug_session->continue_debuggee_and_wait();
@@ -123,6 +124,26 @@ OwnPtr<DebugSession> DebugSession::exec_and_attach(DeprecatedString const& comma
         return {};
     }
 
+    // At this point, libraries should have been loaded
+    debug_session->update_loaded_libs();
+
+    return debug_session;
+}
+
+OwnPtr<DebugSession> DebugSession::attach(pid_t pid, DeprecatedString source_root, Function<void(float)> on_initialization_progress)
+{
+    if (ptrace(PT_ATTACH, pid, 0, 0) < 0) {
+        perror("PT_ATTACH");
+        return {};
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, WSTOPPED | WEXITED) != pid || !WIFSTOPPED(status)) {
+        perror("waitpid");
+        return {};
+    }
+
+    auto debug_session = adopt_own(*new DebugSession(pid, source_root, move(on_initialization_progress)));
     // At this point, libraries should have been loaded
     debug_session->update_loaded_libs();
 
@@ -424,7 +445,7 @@ Optional<DebugSession::InsertBreakpointAtSourcePositionResult> DebugSession::ins
 
 void DebugSession::update_loaded_libs()
 {
-    auto file = Core::File::construct(DeprecatedString::formatted("/proc/{}/vm", m_debuggee_pid));
+    auto file = Core::DeprecatedFile::construct(DeprecatedString::formatted("/proc/{}/vm", m_debuggee_pid));
     bool rc = file->open(Core::OpenMode::ReadOnly);
     VERIFY(rc);
 
@@ -447,7 +468,17 @@ void DebugSession::update_loaded_libs()
         return DeprecatedString::formatted("/usr/lib/{}", lib_name);
     };
 
+    ScopeGuard progress_guard([this]() {
+        m_on_initialization_progress(0);
+    });
+
+    size_t vm_entry_index = 0;
+
     vm_entries.for_each([&](auto& entry) {
+        ++vm_entry_index;
+        if (m_on_initialization_progress)
+            m_on_initialization_progress(vm_entry_index / static_cast<float>(vm_entries.size()));
+
         // TODO: check that region is executable
         auto vm_name = entry.as_object().get_deprecated_string("name"sv).value();
 
@@ -456,7 +487,7 @@ void DebugSession::update_loaded_libs()
             return IterationDecision::Continue;
 
         DeprecatedString lib_name = object_path.value();
-        if (Core::File::looks_like_shared_library(lib_name))
+        if (Core::DeprecatedFile::looks_like_shared_library(lib_name))
             lib_name = LexicalPath::basename(object_path.value());
 
         FlatPtr base_address = entry.as_object().get_addr("address"sv).value_or(0);
@@ -477,6 +508,11 @@ void DebugSession::update_loaded_libs()
 
         return IterationDecision::Continue;
     });
+}
+
+void DebugSession::stop_debuggee()
+{
+    kill(pid(), SIGSTOP);
 }
 
 }

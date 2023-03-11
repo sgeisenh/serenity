@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,11 +20,11 @@ REGISTER_WIDGET(GUI, DialogButton)
 
 namespace GUI {
 
-Button::Button(DeprecatedString text)
+Button::Button(String text)
     : AbstractButton(move(text))
 {
-    set_min_size({ 40, 22 });
-    set_preferred_size({ SpecialDimension::OpportunisticGrow, 22 });
+    set_min_size({ 40, SpecialDimension::Shrink });
+    set_preferred_size({ SpecialDimension::OpportunisticGrow, SpecialDimension::Shrink });
     set_focus_policy(GUI::FocusPolicy::StrongFocus);
 
     on_focus_change = [this](bool has_focus, auto) {
@@ -89,18 +89,15 @@ void Button::paint_event(PaintEvent& event)
             // Reusing that threshold here as it seems to work reasonably well.
             should_invert_icon = contrast_ratio < 4.5f && contrast_ratio < palette().button().contrast_ratio(solid_color->inverted());
         }
-        if (should_invert_icon)
-            m_icon->invert();
+        auto icon = should_invert_icon ? m_icon->inverted().release_value_but_fixme_should_propagate_errors() : NonnullRefPtr { *m_icon };
         if (is_enabled()) {
             if (is_hovered())
-                painter.blit_brightened(icon_location, *m_icon, m_icon->rect());
+                painter.blit_brightened(icon_location, *icon, icon->rect());
             else
-                painter.blit(icon_location, *m_icon, m_icon->rect());
+                painter.blit(icon_location, *icon, icon->rect());
         } else {
-            painter.blit_disabled(icon_location, *m_icon, m_icon->rect(), palette());
+            painter.blit_disabled(icon_location, *icon, icon->rect(), palette());
         }
-        if (should_invert_icon)
-            m_icon->invert();
     }
     auto& font = is_checked() ? this->font().bold_variant() : this->font();
     if (m_icon && !text().is_empty()) {
@@ -108,7 +105,7 @@ void Button::paint_event(PaintEvent& event)
         content_rect.set_width(content_rect.width() - m_icon->width() - icon_spacing());
     }
 
-    Gfx::IntRect text_rect { 0, 0, static_cast<int>(ceilf(font.width(text()))), font.glyph_height() };
+    Gfx::IntRect text_rect { 0, 0, static_cast<int>(ceilf(font.width(text()))), font.pixel_size_rounded_up() };
     if (text_rect.width() > content_rect.width())
         text_rect.set_width(content_rect.width());
     text_rect.align_within(content_rect, text_alignment());
@@ -145,6 +142,12 @@ void Button::click(unsigned modifiers)
         m_action->activate(this);
 }
 
+void Button::double_click(unsigned int modifiers)
+{
+    if (on_double_click)
+        on_double_click(modifiers);
+}
+
 void Button::middle_mouse_click(unsigned int modifiers)
 {
     if (!is_enabled())
@@ -175,7 +178,7 @@ void Button::set_action(Action& action)
         set_checked(action.is_checked());
 }
 
-void Button::set_icon(RefPtr<Gfx::Bitmap> icon)
+void Button::set_icon(RefPtr<Gfx::Bitmap const> icon)
 {
     if (m_icon == icon)
         return;
@@ -272,24 +275,26 @@ void Button::timer_event(Core::TimerEvent&)
 
 Optional<UISize> Button::calculated_min_size() const
 {
-    int horizontal = 0, vertical = 0;
+    int width = 0;
+    int height = 0;
 
     if (!text().is_empty()) {
         auto& font = this->font();
-        horizontal = font.width(text()) + 2;
-        vertical = font.glyph_height() + 4; // FIXME: Use actual maximum total height
+        width = static_cast<int>(ceilf(font.width(text()))) + 2;
+        height = font.pixel_size_rounded_up() + 4; // FIXME: Use actual maximum total height
     }
 
     if (m_icon) {
-        vertical = max(vertical, m_icon->height());
-
-        horizontal += m_icon->width() + icon_spacing();
+        height += max(height, m_icon->height());
+        width += m_icon->width() + icon_spacing();
     }
 
-    horizontal += 8;
-    vertical += 4;
+    width += 8;
+    height += 4;
 
-    return UISize(horizontal, vertical);
+    height = max(22, height);
+
+    return UISize(width, height);
 }
 
 }

@@ -103,9 +103,7 @@ BookmarksBarWidget& BookmarksBarWidget::the()
 BookmarksBarWidget::BookmarksBarWidget(DeprecatedString const& bookmarks_file, bool enabled)
 {
     s_the = this;
-    set_layout<GUI::HorizontalBoxLayout>();
-    layout()->set_spacing(0);
-    layout()->set_margins(2);
+    set_layout<GUI::HorizontalBoxLayout>(2, 0);
 
     set_fixed_height(20);
 
@@ -205,7 +203,7 @@ void BookmarksBarWidget::model_did_update(unsigned)
         m_bookmarks.append(button);
 
         button.set_button_style(Gfx::ButtonStyle::Coolbar);
-        button.set_text(title);
+        button.set_text(String::from_deprecated_string(title).release_value_but_fixme_should_propagate_errors());
         button.set_icon(g_icon_bag.filetype_html);
         button.set_fixed_size(font().width(title) + 32, 20);
         button.set_relative_rect(rect);
@@ -245,13 +243,13 @@ void BookmarksBarWidget::update_content_size()
 
     for (size_t i = 0; i < m_bookmarks.size(); ++i) {
         auto& bookmark = m_bookmarks.at(i);
-        if (x_position + bookmark.width() + m_additional->width() > width()) {
+        if (x_position + bookmark->width() + m_additional->width() > width()) {
             m_last_visible_index = i;
             break;
         }
-        bookmark.set_x(x_position);
-        bookmark.set_visible(true);
-        x_position += bookmark.width();
+        bookmark->set_x(x_position);
+        bookmark->set_visible(true);
+        x_position += bookmark->width();
     }
 
     if (m_last_visible_index < 0) {
@@ -263,8 +261,8 @@ void BookmarksBarWidget::update_content_size()
         m_additional->set_menu(m_additional_menu);
         for (size_t i = m_last_visible_index; i < m_bookmarks.size(); ++i) {
             auto& bookmark = m_bookmarks.at(i);
-            bookmark.set_visible(false);
-            m_additional_menu->add_action(GUI::Action::create(bookmark.text(), g_icon_bag.filetype_html, [&](auto&) { bookmark.on_click(0); }));
+            bookmark->set_visible(false);
+            m_additional_menu->add_action(GUI::Action::create(bookmark->text().to_deprecated_string(), g_icon_bag.filetype_html, [&](auto&) { bookmark->on_click(0); }));
         }
     }
 }

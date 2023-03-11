@@ -49,6 +49,7 @@ public:
     explicit WebContentView(StringView webdriver_content_ipc_path);
     virtual ~WebContentView() override;
 
+    Function<void()> on_close;
     Function<void(Gfx::IntPoint screen_position)> on_context_menu_request;
     Function<void(const AK::URL&, DeprecatedString const& target, unsigned modifiers)> on_link_click;
     Function<void(const AK::URL&, Gfx::IntPoint screen_position)> on_link_context_menu_request;
@@ -96,6 +97,10 @@ public:
 
     ErrorOr<String> dump_layout_tree();
 
+    void set_viewport_rect(Gfx::IntRect);
+    void set_window_size(Gfx::IntSize);
+    void set_window_position(Gfx::IntPoint);
+
     Gfx::IntPoint to_content(Gfx::IntPoint) const;
     Gfx::IntPoint to_widget(Gfx::IntPoint) const;
 
@@ -140,6 +145,7 @@ public:
     virtual DeprecatedString notify_server_did_request_cookie(Badge<WebContentClient>, const AK::URL& url, Web::Cookie::Source source) override;
     virtual void notify_server_did_set_cookie(Badge<WebContentClient>, const AK::URL& url, Web::Cookie::ParsedCookie const& cookie, Web::Cookie::Source source) override;
     virtual void notify_server_did_update_cookie(Badge<WebContentClient>, Web::Cookie::Cookie const& cookie) override;
+    virtual void notify_server_did_close_browsing_context(Badge<WebContentClient>) override;
     virtual void notify_server_did_update_resource_count(i32 count_waiting) override;
     virtual void notify_server_did_request_restore_window() override;
     virtual Gfx::IntPoint notify_server_did_request_reposition_window(Gfx::IntPoint) override;
@@ -151,6 +157,7 @@ public:
     virtual void notify_server_did_finish_handling_input_event(bool event_was_accepted) override;
 
 signals:
+    void close();
     void link_hovered(QString, int timeout = 0);
     void link_unhovered();
     void back_mouse_button();

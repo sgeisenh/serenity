@@ -28,7 +28,7 @@ public:
     static ErrorOr<NonnullRefPtr<Font>> try_load_from_externally_owned_memory(ReadonlyBytes bytes, unsigned index = 0);
 
     virtual Gfx::ScaledFontMetrics metrics(float x_scale, float y_scale) const override;
-    virtual Gfx::ScaledGlyphMetrics glyph_metrics(u32 glyph_id, float x_scale, float y_scale) const override;
+    virtual Gfx::ScaledGlyphMetrics glyph_metrics(u32 glyph_id, float x_scale, float y_scale, float point_width, float point_height) const override;
     virtual float glyphs_horizontal_kerning(u32 left_glyph_id, u32 right_glyph_id, float x_scale) const override;
     virtual RefPtr<Gfx::Bitmap> rasterize_glyph(u32 glyph_id, float x_scale, float y_scale, Gfx::GlyphSubpixelOffset) const override;
     virtual u32 glyph_count() const override;
@@ -37,14 +37,27 @@ public:
     virtual DeprecatedString family() const override;
     virtual DeprecatedString variant() const override;
     virtual u16 weight() const override;
+    virtual u16 width() const override;
     virtual u8 slope() const override;
     virtual bool is_fixed_width() const override;
+    virtual bool has_color_bitmaps() const override;
 
     Optional<ReadonlyBytes> font_program() const;
     Optional<ReadonlyBytes> control_value_program() const;
     Optional<ReadonlyBytes> glyph_program(u32 glyph_id) const;
 
 private:
+    RefPtr<Gfx::Bitmap> color_bitmap(u32 glyph_id) const;
+
+    struct EmbeddedBitmapWithFormat17 {
+        CBLC::BitmapSize const& bitmap_size;
+        CBDT::Format17 const& format17;
+    };
+
+    using EmbeddedBitmapData = Variant<EmbeddedBitmapWithFormat17, Empty>;
+
+    EmbeddedBitmapData embedded_bitmap_data_for_glyph(u32 glyph_id) const;
+
     enum class Offsets {
         NumTables = 4,
         TableRecord_Offset = 8,
@@ -58,7 +71,22 @@ private:
 
     static ErrorOr<NonnullRefPtr<Font>> try_load_from_offset(ReadonlyBytes, unsigned index = 0);
 
-    Font(ReadonlyBytes bytes, Head&& head, Name&& name, Hhea&& hhea, Maxp&& maxp, Hmtx&& hmtx, Cmap&& cmap, Loca&& loca, Glyf&& glyf, Optional<OS2> os2, Optional<Kern>&& kern, Optional<Fpgm> fpgm, Optional<Prep> prep)
+    Font(
+        ReadonlyBytes bytes,
+        Head&& head,
+        Name&& name,
+        Hhea&& hhea,
+        Maxp&& maxp,
+        Hmtx&& hmtx,
+        Cmap&& cmap,
+        Optional<Loca>&& loca,
+        Optional<Glyf>&& glyf,
+        Optional<OS2> os2,
+        Optional<Kern>&& kern,
+        Optional<Fpgm> fpgm,
+        Optional<Prep> prep,
+        Optional<CBLC> cblc,
+        Optional<CBDT> cbdt)
         : m_buffer(move(bytes))
         , m_head(move(head))
         , m_name(move(name))
@@ -72,6 +100,8 @@ private:
         , m_kern(move(kern))
         , m_fpgm(move(fpgm))
         , m_prep(move(prep))
+        , m_cblc(move(cblc))
+        , m_cbdt(move(cbdt))
     {
     }
 
@@ -85,13 +115,15 @@ private:
     Hhea m_hhea;
     Maxp m_maxp;
     Hmtx m_hmtx;
-    Loca m_loca;
-    Glyf m_glyf;
+    Optional<Loca> m_loca;
+    Optional<Glyf> m_glyf;
     Cmap m_cmap;
     Optional<OS2> m_os2;
     Optional<Kern> m_kern;
     Optional<Fpgm> m_fpgm;
     Optional<Prep> m_prep;
+    Optional<CBLC> m_cblc;
+    Optional<CBDT> m_cbdt;
 
     // This cache stores information per code point.
     // It's segmented into pages with data about 256 code points each.

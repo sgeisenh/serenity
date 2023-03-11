@@ -8,6 +8,7 @@
 #pragma once
 
 #include <AK/DeprecatedString.h>
+#include <AK/String.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
 
@@ -45,6 +46,10 @@ public:
     URL(StringView);
     URL(DeprecatedString const& string)
         : URL(string.view())
+    {
+    }
+    URL(String const& string)
+        : URL(string.bytes_as_string_view())
     {
     }
 
@@ -88,7 +93,7 @@ public:
 
     bool equals(URL const& other, ExcludeFragment = ExcludeFragment::No) const;
 
-    URL complete_url(DeprecatedString const&) const;
+    URL complete_url(StringView) const;
 
     bool data_payload_is_base64() const { return m_data_payload_is_base64; }
     DeprecatedString const& data_mime_type() const { return m_data_mime_type; }
